@@ -1,16 +1,13 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { createClient } from '@supabase/supabase-js';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = process.cwd();
 
 // Initialize Supabase client with live credentials
 const supabaseUrl =
@@ -1086,21 +1083,11 @@ app.use(express.json());
 
 // Normalize URL in case serverless handler or rewrite stripped /api prefix
 app.use((req, res, next) => {
-  if (!req.url.startsWith('/api') && !req.url.startsWith('/assets') && !req.url.includes('.')) {
+  const original = (req.headers['x-matched-path'] as string) || req.originalUrl;
+  if (original && original.startsWith('/api') && req.url !== original) {
+    req.url = original;
+  } else if (!req.url.startsWith('/api') && !req.url.startsWith('/assets') && !req.url.includes('.')) {
     req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
-  }
-  next();
-});
-
-let supabaseInitialized = false;
-app.use(async (req, res, next) => {
-  if (!supabaseInitialized) {
-    try {
-      await loadInitialDataFromSupabase();
-      supabaseInitialized = true;
-    } catch (e) {
-      console.warn('Supabase lazy load note:', e);
-    }
   }
   next();
 });
@@ -3717,10 +3704,21 @@ Respond in valid JSON format with this structure:
     }
   });
 
+// Global Error Handler
+app.use((err: any, req: Request, res: Response, next: any) => {
+  console.error('[InternTrack Server Error]', err);
+  if (!res.headersSent) {
+    res.status(500).json({
+      error: err?.message || 'An unexpected server error occurred',
+    });
+  }
+});
+
 // --- Vite / Static Middleware Mounting (Local Dev Only) ---
 if (!process.env.VERCEL) {
   async function startLocalServer() {
     if (process.env.NODE_ENV !== 'production') {
+      const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa',

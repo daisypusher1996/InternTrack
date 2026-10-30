@@ -97,6 +97,17 @@ export default function App() {
 
   // Refresh data from full-stack Express API
   const refreshData = async () => {
+    const safeFetch = async (url: string, fallback: any = []) => {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return fallback;
+        const text = await r.text();
+        return JSON.parse(text);
+      } catch {
+        return fallback;
+      }
+    };
+
     try {
       const [
         statsRes,
@@ -109,15 +120,15 @@ export default function App() {
         summariesRes,
         batchesRes,
       ] = await Promise.all([
-        fetch('/api/stats').then((r) => r.json()),
-        fetch('/api/students').then((r) => r.json()),
-        fetch('/api/groups').then((r) => r.json()),
-        fetch('/api/companies').then((r) => r.json()),
-        fetch('/api/attendance').then((r) => r.json()),
-        fetch('/api/accomplishments').then((r) => r.json()),
-        fetch('/api/alerts').then((r) => r.json()),
-        fetch('/api/ai/summaries').then((r) => r.json()),
-        fetch('/api/batches').then((r) => r.json()),
+        safeFetch('/api/stats', {}),
+        safeFetch('/api/students', []),
+        safeFetch('/api/groups', []),
+        safeFetch('/api/companies', []),
+        safeFetch('/api/attendance', []),
+        safeFetch('/api/accomplishments', []),
+        safeFetch('/api/alerts', []),
+        safeFetch('/api/ai/summaries', []),
+        safeFetch('/api/batches', []),
       ]);
 
       setStats(statsRes);
@@ -429,7 +440,13 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(text || 'Authentication failed (invalid response from server)');
+    }
     if (!res.ok) throw new Error(data.error || 'Authentication failed');
 
     setCurrentUser(data.user);
@@ -447,7 +464,13 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(regData),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(text || 'Registration failed (invalid response from server)');
+    }
     if (!res.ok) throw new Error(data.error || 'Registration failed');
 
     const createdUserId = data.user?.id;
