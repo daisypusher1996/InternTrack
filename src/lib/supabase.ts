@@ -537,42 +537,123 @@ export function logDbDiagnostic(
 }
 
 /**
+ * Resolve the role records that belong to an authenticated user.
+ *
+ * NOTE: The public `students` table has NO `email` column (only `id` / `auth_user_id`),
+ * so students are matched by auth uid there, and by email in `student_profiles`.
+ * Each query only references columns that actually exist, so a single bad column
+ * can no longer make the whole lookup fail silently (which previously left freshly
+ * onboarded Google users stuck on the onboarding screen forever).
+ */
+export async function findRoleRecords(
+  authUserId: string | null | undefined,
+  email: string | null | undefined
+): Promise<{ coordinator: any | null; student: any | null; studentProfile: any | null }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { coordinator: null, student: null, studentProfile: null };
+  }
+  const cleanEmail = (email || '').toLowerCase().trim();
+  const uid = authUserId && isValidUuid(authUserId) ? authUserId : null;
+
+  const coordFilters: string[] = [];
+  if (uid) coordFilters.push(`auth_user_id.eq.${uid}`, `id.eq.${uid}`);
+  if (cleanEmail) coordFilters.push(`email.eq.${cleanEmail}`);
+
+  const [coordRes, studentRes, studentProfileRes] = await Promise.all([
+    coordFilters.length
+      ? supabase.from('coordinators').select('*').or(coordFilters.join(',')).limit(1)
+      : Promise.resolve({ data: null, error: null } as any),
+    uid
+      ? supabase.from('students').select('*').or(`auth_user_id.eq.${uid},id.eq.${uid}`).limit(1)
+      : Promise.resolve({ data: null, error: null } as any),
+    cleanEmail
+      ? supabase.from('student_profiles').select('*').eq('email', cleanEmail).limit(1)
+      : Promise.resolve({ data: null, error: null } as any),
+  ]);
+
+  if (coordRes.error) console.warn('[ROLE LOOKUP] coordinators query error:', coordRes.error);
+  if (studentRes.error) console.warn('[ROLE LOOKUP] students query error:', studentRes.error);
+  if (studentProfileRes.error && studentProfileRes.error.code !== 'PGRST205') {
+    console.warn('[ROLE LOOKUP] student_profiles query error:', studentProfileRes.error);
+  }
+
+  return {
+    coordinator: coordRes.data && coordRes.data.length > 0 ? coordRes.data[0] : null,
+    student: studentRes.data && studentRes.data.length > 0 ? studentRes.data[0] : null,
+    studentProfile:
+      studentProfileRes.data && studentProfileRes.data.length > 0 ? studentProfileRes.data[0] : null,
+  };
+}
+
+/**
+ * Map raw Supabase `students` + `student_profiles` rows into the app's camelCase Student shape.
+ */
+export function mapDbStudentRecord(studentRow: any, profileRow: any, email: string): any {
+  const s = studentRow || {};
+  const p = profileRow || {};
+  const cleanEmail = (p.email || email || '').toLowerCase().trim();
+  return {
+    id: s.id || p.id,
+    buId: p.bu_id || p.student_id_number || extractStudentIdFromEmail(cleanEmail),
+    studentIdNumber: p.student_id_number || p.bu_id || undefined,
+    fullName: p.full_name || s.full_name || cleanEmail.split('@')[0],
+    email: cleanEmail,
+    degree: p.degree || '',
+    college: p.college || '',
+    classBlock: p.class_block || undefined,
+    batchId: p.batch_id || undefined,
+    enrollmentType: 'individual',
+    companyId: p.company_id || '',
+    companyName: p.company_name || 'Not Yet Enrolled (Pending Application)',
+    companyBranch: p.company_branch || undefined,
+    mentorName: p.mentor_name || 'Unassigned',
+    coordinatorId: p.coordinator_id || undefined,
+    coordinatorName: p.coordinator_name || undefined,
+    coordinatorEmail: p.coordinator_email || undefined,
+    dutyStart: p.duty_start || '',
+    dutyEnd: p.duty_end || '',
+    dutyDays: p.duty_days || 'Mon,Tue,Wed,Thu,Fri',
+    targetHours: Number(p.target_hours ?? s.required_hours ?? 240),
+    renderedHours: Number(p.rendered_hours ?? s.completed_hours ?? 0),
+    attendanceRate: Number(p.attendance_rate ?? 100),
+    status: p.status || 'active',
+    enrollmentStatus: p.enrollment_status || 'not_enrolled',
+    scheduledDeploymentDate: p.scheduled_deployment_date || undefined,
+    deploymentApproved: Boolean(p.deployment_approved),
+    isArchived: Boolean(p.is_archived),
+    avatarUrl: p.avatar_url || '',
+  };
+}
+
+/**
  * Strict Role Isolation Check: Prevents an account from registering across both roles.
+ * Accepts an email and/or Supabase auth uid.
  */
 export async function checkRoleIsolation(
   userIdOrEmail: string,
-  targetRole: 'coordinator' | 'student'
+  targetRole: 'coordinator' | 'student',
+  authUserId?: string | null
 ): Promise<{ allowed: boolean; conflictingRole?: 'coordinator' | 'student'; message?: string }> {
   if (!isSupabaseConfigured || !supabase) return { allowed: true };
-  const clean = userIdOrEmail.toLowerCase().trim();
+  const clean = (userIdOrEmail || '').toLowerCase().trim();
+  const email = clean.includes('@') ? clean : '';
+  const uid = authUserId || (isValidUuid(clean) ? clean : null);
 
   try {
-    if (targetRole === 'coordinator') {
-      const { data: st } = await supabase
-        .from('students')
-        .select('id, email, auth_user_id')
-        .or(`email.eq.${clean},auth_user_id.eq.${clean},id.eq.${clean}`)
-        .limit(1);
-      if (st && st.length > 0) {
-        return {
-          allowed: false,
-          conflictingRole: 'student',
-          message: 'This account is already registered as a Student.',
-        };
-      }
-    } else {
-      const { data: cp } = await supabase
-        .from('coordinators')
-        .select('id, email, auth_user_id')
-        .or(`email.eq.${clean},auth_user_id.eq.${clean},id.eq.${clean}`)
-        .limit(1);
-      if (cp && cp.length > 0) {
-        return {
-          allowed: false,
-          conflictingRole: 'coordinator',
-          message: 'This account is already registered as a Coordinator.',
-        };
-      }
+    const { coordinator, student, studentProfile } = await findRoleRecords(uid, email);
+    if (targetRole === 'coordinator' && (student || studentProfile)) {
+      return {
+        allowed: false,
+        conflictingRole: 'student',
+        message: 'This account is already registered as a Student.',
+      };
+    }
+    if (targetRole === 'student' && coordinator) {
+      return {
+        allowed: false,
+        conflictingRole: 'coordinator',
+        message: 'This account is already registered as a Coordinator.',
+      };
     }
   } catch (err) {
     console.warn('Role isolation query note:', err);
@@ -582,10 +663,13 @@ export async function checkRoleIsolation(
 }
 
 /**
- * Synchronize user profile into Supabase
+ * Synchronize user profile into Supabase.
+ * Throws when the role-isolation check fails or the primary role table write fails,
+ * so the UI never proceeds on a write that did not land.
  */
 export async function syncProfileToSupabase(profile: {
   id?: string;
+  authUserId?: string;
   email: string;
   fullName: string;
   role: 'coordinator' | 'student';
@@ -599,123 +683,106 @@ export async function syncProfileToSupabase(profile: {
   if (!isSupabaseConfigured || !supabase) return;
   const cleanEmail = profile.email.toLowerCase().trim();
   const avatarToSave = profile.avatarUrl && profile.avatarUrl.trim() !== '' ? profile.avatarUrl.trim() : null;
+  const authUid = profile.authUserId && isValidUuid(profile.authUserId) ? profile.authUserId : null;
 
-  try {
-    const singleProfileId = (profile.id && isValidUuid(profile.id))
-      ? profile.id
-      : isValidUuid(profile.studentIdNumber)
-      ? profile.studentIdNumber!
-      : isValidUuid(profile.coordinatorIdNumber)
-      ? profile.coordinatorIdNumber!
-      : getDeterministicUuid(cleanEmail);
+  const singleProfileId = authUid
+    ? authUid
+    : (profile.id && isValidUuid(profile.id))
+    ? profile.id
+    : getDeterministicUuid(cleanEmail);
 
-    // Strict Role Isolation Enforcement
-    const isolation = await checkRoleIsolation(singleProfileId, profile.role);
-    if (!isolation.allowed) {
-      throw new Error(isolation.message);
-    }
-    const emailIsolation = await checkRoleIsolation(cleanEmail, profile.role);
-    if (!emailIsolation.allowed) {
-      throw new Error(emailIsolation.message);
-    }
-
-    if (profile.role === 'coordinator') {
-      // 1. Sync to coordinators table (user's schema)
-      let coordPayload: any = {
-        id: singleProfileId,
-        auth_user_id: singleProfileId,
-        full_name: profile.fullName,
-        email: cleanEmail,
-        department: profile.department || 'Department of Computer Science',
-      };
-      let { error: coordErr } = await supabase.from('coordinators').upsert(coordPayload, { onConflict: 'email' });
-      if (coordErr && (coordErr.code === '23503' || String(coordErr.message || '').includes('foreign key constraint'))) {
-        delete coordPayload.auth_user_id;
-        const { error: coordErr2 } = await supabase.from('coordinators').upsert(coordPayload, { onConflict: 'email' });
-        coordErr = coordErr2;
-      }
-      logDbDiagnostic('upsert', !coordErr, 'coordinators', { email: cleanEmail }, coordErr);
-
-      // 2. Also sync to coordinator_profiles
-      const coordIdNum = profile.coordinatorIdNumber || profile.buId;
-      let cpPayload: any = {
-        id: singleProfileId,
-        user_id: singleProfileId,
-        coordinator_id_number: coordIdNum,
-        bu_id: profile.buId,
-        full_name: profile.fullName,
-        email: cleanEmail,
-        role: 'coordinator',
-        department: profile.department || 'Department of Computer Science',
-        avatar_url: avatarToSave,
-        updated_at: new Date().toISOString(),
-      };
-      let { error: cpErr } = await supabase.from('coordinator_profiles').upsert(cpPayload, { onConflict: 'email' });
-      if (cpErr && (cpErr.code === '23503' || String(cpErr.message || '').includes('foreign key constraint'))) {
-        delete cpPayload.user_id;
-        const { error: cpErr2 } = await supabase.from('coordinator_profiles').upsert(cpPayload, { onConflict: 'email' });
-        cpErr = cpErr2;
-      }
-      logDbDiagnostic('upsert', !cpErr, 'coordinator_profiles', { email: cleanEmail }, cpErr);
-    } else {
-      // Student profile
-      const studentIdNum = profile.studentIdNumber || profile.buId;
-      let spPayload: any = {
-        id: singleProfileId,
-        user_id: singleProfileId,
-        student_id_number: studentIdNum,
-        bu_id: profile.buId,
-        full_name: profile.fullName,
-        email: cleanEmail,
-        department: profile.department || 'Department of Computer Science',
-        class_block: profile.classBlock || null,
-        avatar_url: avatarToSave,
-        updated_at: new Date().toISOString(),
-      };
-      let { error: spErr } = await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
-      if (spErr && (spErr.code === '23503' || String(spErr.message || '').includes('foreign key constraint'))) {
-        delete spPayload.user_id;
-        const { error: spErr2 } = await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
-        spErr = spErr2;
-      }
-      logDbDiagnostic('upsert', !spErr, 'student_profiles', { email: cleanEmail }, spErr);
-
-      // 2. Also sync to students public table linking auth_user_id
-      let studentPayload: any = {
-        id: singleProfileId,
-        auth_user_id: singleProfileId,
-        full_name: profile.fullName,
-        required_hours: 240.00,
-        completed_hours: 0.00,
-      };
-      let { error: sErr } = await supabase.from('students').upsert(studentPayload, { onConflict: 'id' });
-      if (sErr && (sErr.code === '23503' || String(sErr.message || '').includes('foreign key constraint'))) {
-        delete studentPayload.auth_user_id;
-        const { error: sErr2 } = await supabase.from('students').upsert(studentPayload, { onConflict: 'id' });
-        sErr = sErr2;
-      }
-      logDbDiagnostic('upsert', !sErr, 'students', { email: cleanEmail }, sErr);
-    }
-
-    // 3. Keep profiles table updated
-    const { error: pErr } = await supabase.from('profiles').upsert(
-      {
-        id: singleProfileId,
-        email: cleanEmail,
-        full_name: profile.fullName,
-        role: profile.role,
-        bu_id: profile.buId,
-        department: profile.department || 'Department of Computer Science',
-        class_block: profile.classBlock || null,
-        avatar_url: avatarToSave,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'email' }
-    );
-    logDbDiagnostic('upsert', !pErr, 'profiles', { email: cleanEmail }, pErr);
-  } catch (err) {
-    logDbDiagnostic('syncProfileToSupabase', false, 'profiles/coordinators', profile, err);
+  // Strict Role Isolation Enforcement (must throw - never swallowed)
+  const isolation = await checkRoleIsolation(cleanEmail, profile.role, authUid || singleProfileId);
+  if (!isolation.allowed) {
+    throw new Error(isolation.message);
   }
+
+  if (profile.role === 'coordinator') {
+    // 1. PRIMARY: coordinators table (linked to auth.users via auth_user_id)
+    const coordPayload: any = {
+      id: singleProfileId,
+      auth_user_id: authUid,
+      full_name: profile.fullName,
+      email: cleanEmail,
+      department: profile.department || 'Department of Computer Science',
+    };
+    let { error: coordErr } = await supabase.from('coordinators').upsert(coordPayload, { onConflict: 'email' });
+    if (coordErr && (coordErr.code === '23503' || String(coordErr.message || '').includes('foreign key constraint'))) {
+      delete coordPayload.auth_user_id;
+      const { error: coordErr2 } = await supabase.from('coordinators').upsert(coordPayload, { onConflict: 'email' });
+      coordErr = coordErr2;
+    }
+    logDbDiagnostic('upsert', !coordErr, 'coordinators', { email: cleanEmail }, coordErr);
+    if (coordErr) {
+      throw new Error(`Could not save coordinator account to Supabase: ${coordErr.message}`);
+    }
+
+    // 2. SECONDARY: coordinator_profiles (optional table)
+    const coordIdNum = profile.coordinatorIdNumber || profile.buId;
+    const cpPayload: any = {
+      id: singleProfileId,
+      bu_id: coordIdNum,
+      full_name: profile.fullName,
+      email: cleanEmail,
+      role: 'coordinator',
+      department: profile.department || 'Department of Computer Science',
+      avatar_url: avatarToSave,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: cpErr } = await supabase.from('coordinator_profiles').upsert(cpPayload, { onConflict: 'email' });
+    logDbDiagnostic('upsert', !cpErr, 'coordinator_profiles', { email: cleanEmail }, cpErr);
+  } else {
+    // 1. PRIMARY: students table (linked to auth.users via auth_user_id)
+    const studentPayload: any = {
+      id: singleProfileId,
+      auth_user_id: authUid,
+      full_name: profile.fullName,
+      required_hours: 240.0,
+      completed_hours: 0.0,
+    };
+    let { error: sErr } = await supabase.from('students').upsert(studentPayload, { onConflict: 'id' });
+    if (sErr && (sErr.code === '23503' || String(sErr.message || '').includes('foreign key constraint'))) {
+      delete studentPayload.auth_user_id;
+      const { error: sErr2 } = await supabase.from('students').upsert(studentPayload, { onConflict: 'id' });
+      sErr = sErr2;
+    }
+    logDbDiagnostic('upsert', !sErr, 'students', { email: cleanEmail }, sErr);
+    if (sErr) {
+      throw new Error(`Could not save student account to Supabase: ${sErr.message}`);
+    }
+
+    // 2. student_profiles (holds email + institutional details)
+    const studentIdNum = profile.studentIdNumber || profile.buId;
+    const spPayload: any = {
+      id: singleProfileId,
+      bu_id: studentIdNum,
+      full_name: profile.fullName,
+      email: cleanEmail,
+      department: profile.department || 'Department of Computer Science',
+      class_block: profile.classBlock || null,
+      avatar_url: avatarToSave,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: spErr } = await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
+    logDbDiagnostic('upsert', !spErr, 'student_profiles', { email: cleanEmail }, spErr);
+  }
+
+  // 3. Keep profiles table updated (optional)
+  const { error: pErr } = await supabase.from('profiles').upsert(
+    {
+      id: singleProfileId,
+      email: cleanEmail,
+      full_name: profile.fullName,
+      role: profile.role,
+      bu_id: profile.buId,
+      department: profile.department || 'Department of Computer Science',
+      class_block: profile.classBlock || null,
+      avatar_url: avatarToSave,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'email' }
+  );
+  logDbDiagnostic('upsert', !pErr, 'profiles', { email: cleanEmail }, pErr);
 }
 
 /**
@@ -723,6 +790,7 @@ export async function syncProfileToSupabase(profile: {
  */
 export async function syncStudentToSupabase(student: {
   id?: string;
+  authUserId?: string;
   buId: string;
   studentIdNumber?: string;
   fullName: string;
@@ -750,14 +818,11 @@ export async function syncStudentToSupabase(student: {
   const cleanEmail = student.email.toLowerCase().trim();
   const avatarToSave = student.avatarUrl && student.avatarUrl.trim() !== '' ? student.avatarUrl.trim() : null;
   const studentIdNum = student.studentIdNumber || student.buId;
-  const singleProfileId = isValidUuid(student.id) ? student.id! : getDeterministicUuid(cleanEmail);
+  const authUid = student.authUserId && isValidUuid(student.authUserId) ? student.authUserId : null;
+  const singleProfileId = authUid || (isValidUuid(student.id) ? student.id! : getDeterministicUuid(cleanEmail));
 
   // Strict Role Isolation Enforcement: Check if already registered as a Coordinator
-  const coordCheck = await checkRoleIsolation(singleProfileId, 'student');
-  if (!coordCheck.allowed) {
-    throw new Error(coordCheck.message);
-  }
-  const emailCheck = await checkRoleIsolation(cleanEmail, 'student');
+  const emailCheck = await checkRoleIsolation(cleanEmail, 'student', singleProfileId);
   if (!emailCheck.allowed) {
     throw new Error(emailCheck.message);
   }
@@ -767,7 +832,8 @@ export async function syncStudentToSupabase(student: {
     const { data: existingStudentRow } = await supabase
       .from('students')
       .select('id')
-      .or(`id.eq.${singleProfileId}`)
+      .or(`id.eq.${singleProfileId},auth_user_id.eq.${singleProfileId}`)
+      .limit(1)
       .maybeSingle();
 
     let insErr: any = null;
@@ -791,7 +857,7 @@ export async function syncStudentToSupabase(student: {
     } else {
       let payload: any = {
         id: singleProfileId,
-        auth_user_id: singleProfileId,
+        auth_user_id: authUid,
         full_name: student.fullName,
         required_hours: Number(student.targetHours) || 240.00,
         completed_hours: Number(student.renderedHours) || 0.00,
@@ -841,8 +907,18 @@ export async function syncStudentToSupabase(student: {
       updated_at: new Date().toISOString(),
     };
     let { error: spErr } = await supabase.from('student_profiles').upsert(studentPayload, { onConflict: 'email' });
-    if (spErr && (spErr.code === '23503' || String(spErr.message || '').includes('foreign key constraint'))) {
+    if (
+      spErr &&
+      (spErr.code === '23503' ||
+        spErr.code === 'PGRST204' ||
+        String(spErr.message || '').includes('foreign key constraint') ||
+        String(spErr.message || '').includes('column'))
+    ) {
       delete studentPayload.user_id;
+      delete studentPayload.student_id_number;
+      delete studentPayload.coordinator_email;
+      delete studentPayload.scheduled_deployment_date;
+      delete studentPayload.deployment_approved;
       const { error: spErr2 } = await supabase.from('student_profiles').upsert(studentPayload, { onConflict: 'email' });
       spErr = spErr2;
     }

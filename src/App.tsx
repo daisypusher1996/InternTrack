@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { CoordinatorDashboard } from './components/CoordinatorDashboard';
 import { EnrollmentModule } from './components/EnrollmentModule';
@@ -10,7 +10,6 @@ import { StudentPortalView } from './components/StudentPortalView';
 import { AuthModal } from './components/AuthModal';
 import { AuthPage } from './components/AuthPage';
 import { StudentEnrollmentGate } from './components/StudentEnrollmentGate';
-import { StartupSplash } from './components/StartupSplash';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ProfileSettingsView } from './components/ProfileSettingsView';
 import {
@@ -52,6 +51,8 @@ import {
   subscribeToRealtimeData,
   checkRoleIsolation,
   isSupabaseConfigured,
+  findRoleRecords,
+  mapDbStudentRecord,
 } from './lib/supabase';
 
 export type AuthState =
@@ -61,13 +62,19 @@ export type AuthState =
   | { status: 'COORDINATOR'; user: User; coordinator: any }
   | { status: 'STUDENT'; user: User; student: Student };
 
+// True when this window was opened as the Google OAuth popup (embedded/iframe preview flow)
+const isOAuthPopupWindow =
+  typeof window !== 'undefined' &&
+  !!window.opener &&
+  window.opener !== window &&
+  window.name === 'google_oauth_popup';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isAlertsDropdownOpen, setIsAlertsDropdownOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState<boolean>(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
-  const [showSplash, setShowSplash] = useState<boolean>(true);
 
   // Strict Role-Checking State Machine State (Directive 3)
   const [authState, setAuthState] = useState<AuthState>({ status: 'LOADING' });
@@ -156,141 +163,161 @@ export default function App() {
     }
   };
 
+  // Guards against stale/overlapping verification runs and auth events fired mid-registration
+  const verifySeqRef = useRef(0);
+  const isProvisioningRef = useRef(false);
+
   // Rigid Role-Checking State Machine (Directive 3)
-  const syncAndVerifyRole = async (): Promise<void> => {
+  const syncAndVerifyRole = async (): Promise<AuthState['status']> => {
+    const seq = ++verifySeqRef.current;
+    const apply = (next: AuthState, user: User | null): AuthState['status'] => {
+      // Only the most recent verification run is allowed to change the UI
+      if (seq === verifySeqRef.current) {
+        setCurrentUser(user);
+        setAuthState(next);
+      }
+      return next.status;
+    };
+
     try {
       if (!isSupabaseConfigured || !supabase) {
-        setAuthState({ status: 'UNAUTHENTICATED' });
-        setCurrentUser(null);
-        return;
+        return apply({ status: 'UNAUTHENTICATED' }, null);
       }
 
       // a) Await the Supabase auth session
       const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
       if (sessionErr || !sessionData?.session?.user) {
-        setAuthState({ status: 'UNAUTHENTICATED' });
-        setCurrentUser(null);
-        return;
+        return apply({ status: 'UNAUTHENTICATED' }, null);
       }
 
       const authUser = sessionData.session.user;
       const authUserId = authUser.id;
       const cleanEmail = (authUser.email || '').toLowerCase().trim();
 
-      // b) Concurrently query both students and coordinators tables
-      const [coordQuery, studentQuery] = await Promise.all([
-        supabase
-          .from('coordinators')
-          .select('*')
-          .or(`auth_user_id.eq.${authUserId},id.eq.${authUserId},email.eq.${cleanEmail}`)
-          .limit(1),
-        supabase
-          .from('students')
-          .select('*')
-          .or(`auth_user_id.eq.${authUserId},id.eq.${authUserId},email.eq.${cleanEmail}`)
-          .limit(1),
-      ]);
-
-      const coordRecord = coordQuery.data && coordQuery.data.length > 0 ? coordQuery.data[0] : null;
-      const studentRecord = studentQuery.data && studentQuery.data.length > 0 ? studentQuery.data[0] : null;
+      // b) Concurrently query both students and coordinators tables (column-safe lookups)
+      const { coordinator: coordRecord, student: studentRow, studentProfile } = await findRoleRecords(
+        authUserId,
+        cleanEmail
+      );
+      const hasStudent = Boolean(studentRow || studentProfile);
 
       // Strict Role Isolation Enforcement: A single user CANNOT exist in both tables
-      if (coordRecord && studentRecord) {
+      if (coordRecord && hasStudent) {
         console.error('[CRITICAL] Cross-signup conflict! User exists in both tables:', { authUserId, cleanEmail });
-        setAuthState({
-          status: 'ONBOARDING',
-          authUser,
-          error: 'Cross-signup conflict: This account is registered in both Coordinator and Student tables. Please contact administrator.',
-        });
-        setCurrentUser(null);
-        return;
+        return apply(
+          {
+            status: 'ONBOARDING',
+            authUser,
+            error:
+              'Cross-signup conflict: This account is registered in both Coordinator and Student tables. Please contact the administrator.',
+          },
+          null
+        );
       }
 
-      // c) If record found ONLY in students, permanently lock user into Student dashboard
-      if (studentRecord && !coordRecord) {
+      // c) Record found ONLY in students -> lock into Student dashboard
+      if (hasStudent) {
+        const studentRecord: Student = mapDbStudentRecord(studentRow, studentProfile, cleanEmail);
         const studentUser: User = {
           id: studentRecord.id || authUserId,
           email: cleanEmail,
-          fullName: studentRecord.full_name || authUser.user_metadata?.full_name || cleanEmail.split('@')[0],
+          fullName: studentRecord.fullName || authUser.user_metadata?.full_name || cleanEmail.split('@')[0],
           role: 'student',
-          buId: studentRecord.bu_id || authUser.user_metadata?.bu_id || extractStudentIdFromEmail(cleanEmail),
-          department: studentRecord.department || authUser.user_metadata?.department || 'Department of Computer Science',
-          classBlock: studentRecord.class_block || authUser.user_metadata?.class_block || '',
-          avatarUrl: studentRecord.avatar_url || authUser.user_metadata?.avatar_url || '',
+          buId: studentRecord.buId || extractStudentIdFromEmail(cleanEmail),
+          department: studentProfile?.department || authUser.user_metadata?.department || '',
+          classBlock: studentRecord.classBlock || '',
+          avatarUrl: studentRecord.avatarUrl || authUser.user_metadata?.avatar_url || '',
           studentProfile: studentRecord,
         };
-        setCurrentUser(studentUser);
         setActiveTab('student-portal');
-        setAuthState({
-          status: 'STUDENT',
-          user: studentUser,
-          student: studentRecord,
-        });
-        return;
+        return apply({ status: 'STUDENT', user: studentUser, student: studentRecord }, studentUser);
       }
 
-      // d) If record found ONLY in coordinators, permanently lock user into Coordinator dashboard
-      if (coordRecord && !studentRecord) {
+      // d) Record found ONLY in coordinators -> lock into Coordinator dashboard
+      if (coordRecord) {
         const coordUser: User = {
           id: coordRecord.id || authUserId,
           email: cleanEmail,
-          fullName: coordRecord.full_name || authUser.user_metadata?.full_name || 'Practicum Coordinator',
+          fullName: coordRecord.full_name || authUser.user_metadata?.full_name || cleanEmail.split('@')[0],
           role: 'coordinator',
-          buId: coordRecord.bu_id || 'FAC-2026-CS-004',
-          department: coordRecord.department || 'Department of Computer Science',
+          buId: coordRecord.bu_id || authUser.user_metadata?.bu_id || '',
+          department: coordRecord.department || '',
           classBlock: '',
           avatarUrl: coordRecord.avatar_url || authUser.user_metadata?.avatar_url || '',
         };
-        setCurrentUser(coordUser);
         setActiveTab('dashboard');
-        setAuthState({
-          status: 'COORDINATOR',
-          user: coordUser,
-          coordinator: coordRecord,
-        });
-        return;
+        return apply({ status: 'COORDINATOR', user: coordUser, coordinator: coordRecord }, coordUser);
       }
 
-      // e) If neither is found, explicitly route them to Onboarding/Registration view
-      setCurrentUser(null);
-      setAuthState({
-        status: 'ONBOARDING',
-        authUser,
-      });
+      // e) Neither found -> explicit Onboarding/Registration view
+      return apply({ status: 'ONBOARDING', authUser }, null);
     } catch (err: any) {
       console.error('Role verification error:', err);
-      setAuthState({ status: 'UNAUTHENTICATED' });
-      setCurrentUser(null);
+      return apply({ status: 'UNAUTHENTICATED' }, null);
     }
   };
 
   useEffect(() => {
     let isMounted = true;
 
+    // If this window is the Google OAuth popup, hand the session back to the opener and close.
+    if (isOAuthPopupWindow) {
+      (async () => {
+        try {
+          const { data } = await supabase.auth.getSession();
+          if (data?.session && window.opener) {
+            window.opener.postMessage(
+              {
+                type: 'SUPABASE_AUTH_SUCCESS',
+                session: {
+                  access_token: data.session.access_token,
+                  refresh_token: data.session.refresh_token,
+                },
+              },
+              window.location.origin
+            );
+          }
+        } catch (err) {
+          console.warn('OAuth popup handoff note:', err);
+        } finally {
+          window.close();
+        }
+      })();
+      return () => {
+        isMounted = false;
+      };
+    }
+
     const init = async () => {
-      await refreshData();
-      if (isMounted) {
-        await syncAndVerifyRole();
-      }
+      // Role verification first (gates the UI), data load in parallel
+      await Promise.all([syncAndVerifyRole(), refreshData()]);
     };
     init();
 
-    // Listen to Supabase auth events
     if (supabase) {
-      const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
         if (!isMounted) return;
         if (event === 'SIGNED_OUT') {
+          verifySeqRef.current++;
           setCurrentUser(null);
           setAuthState({ status: 'UNAUTHENTICATED' });
-        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          await syncAndVerifyRole();
+          return;
+        }
+        // While a registration/login handler is provisioning rows, it runs verification itself
+        if (isProvisioningRef.current) return;
+        if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+          // Defer out of the auth callback to avoid supabase-js lock re-entrancy
+          setTimeout(() => {
+            if (isMounted && !isProvisioningRef.current) syncAndVerifyRole();
+          }, 0);
         }
       });
 
-      // Handle OAuth popup window messages
+      // Handle OAuth popup window messages (iframe / embedded preview flow)
       const handlePopupMessage = async (e: MessageEvent) => {
+        if (e.origin !== window.location.origin) return;
         if (e.data?.type === 'SUPABASE_AUTH_SUCCESS' || e.data?.type === 'OAUTH_AUTH_SUCCESS') {
-          if (e.data?.session && supabase) {
+          if (e.data?.session?.access_token && e.data?.session?.refresh_token) {
             try {
               await supabase.auth.setSession({
                 access_token: e.data.session.access_token,
@@ -298,13 +325,6 @@ export default function App() {
               });
             } catch (err) {
               console.warn('Set session note:', err);
-            }
-          }
-          if (e.data?.code && supabase) {
-            try {
-              await supabase.auth.exchangeCodeForSession(e.data.code);
-            } catch (err) {
-              console.warn('Exchange code note:', err);
             }
           }
           await syncAndVerifyRole();
@@ -362,103 +382,134 @@ export default function App() {
     const cleanEmail = credentials.email.trim().toLowerCase();
     const targetRole = credentials.role || 'coordinator';
 
-    // Strict Role Isolation Pre-check
-    const isolation = await checkRoleIsolation(cleanEmail, targetRole);
-    if (!isolation.allowed) {
-      throw new Error(isolation.message);
-    }
-
-    if (credentials.password && supabase) {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password: credentials.password,
-      });
-      if (error) {
-        throw new Error(error.message);
-      }
-    }
-
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(credentials),
-    });
-    const text = await res.text();
-    let data: any = {};
+    isProvisioningRef.current = true;
     try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error(text || 'Authentication failed (invalid response from server)');
-    }
-    if (!res.ok) throw new Error(data.error || 'Authentication failed');
+      // Strict Role Isolation Pre-check
+      const isolation = await checkRoleIsolation(cleanEmail, targetRole);
+      if (!isolation.allowed) {
+        throw new Error(isolation.message);
+      }
 
-    // Run strict role verification state machine to lock into confirmed role
-    await syncAndVerifyRole();
-    await refreshData();
+      if (credentials.password && supabase) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: credentials.password,
+        });
+        if (error) {
+          throw new Error(error.message);
+        }
+      }
+
+      // Sync server memory session
+      try {
+        await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(credentials),
+        });
+      } catch (e) {
+        console.warn('Server login note:', e);
+      }
+
+      // Run strict role verification state machine to lock into confirmed role
+      await syncAndVerifyRole();
+      refreshData();
+    } finally {
+      isProvisioningRef.current = false;
+    }
   };
 
   const handleRegister = async (regData: any) => {
     if (!regData.email) throw new Error('Institutional email is required.');
     const cleanEmail = regData.email.trim().toLowerCase();
-    const targetRole = regData.role;
+    const targetRole: 'coordinator' | 'student' = regData.role === 'coordinator' ? 'coordinator' : 'student';
 
-    // Strict Role Isolation Pre-check
-    const isolation = await checkRoleIsolation(cleanEmail, targetRole);
-    if (!isolation.allowed) {
-      throw new Error(isolation.message);
-    }
-
-    const res = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(regData),
-    });
-    const text = await res.text();
-    let data: any = {};
+    isProvisioningRef.current = true;
     try {
-      data = JSON.parse(text);
-    } catch {
-      throw new Error(text || 'Registration failed (invalid response from server)');
-    }
-    if (!res.ok) throw new Error(data.error || 'Registration failed');
+      // Is there already an authenticated Supabase session (e.g. Google OAuth onboarding)?
+      const { data: existingSession } = await supabase.auth.getSession();
+      let authUserId: string | undefined = existingSession?.session?.user?.id;
 
-    const createdUserId = data.user?.id;
+      // Strict Role Isolation Pre-check
+      const isolation = await checkRoleIsolation(cleanEmail, targetRole, authUserId);
+      if (!isolation.allowed) {
+        throw new Error(isolation.message);
+      }
 
-    // Direct write to respective Supabase table and await successful response before proceeding
-    await syncProfileToSupabase({
-      id: createdUserId,
-      email: regData.email,
-      fullName: regData.fullName,
-      role: regData.role,
-      buId: regData.buId,
-      department: regData.department,
-      classBlock: regData.classBlock,
-      avatarUrl: regData.avatarUrl,
-      studentIdNumber: createdUserId,
-      coordinatorIdNumber: createdUserId,
-    });
-
-    if (regData.role === 'student') {
-      await syncStudentToSupabase({
-        id: createdUserId,
-        buId: regData.buId,
-        studentIdNumber: regData.buId,
-        fullName: regData.fullName,
-        email: regData.email,
-        degree: regData.department,
-        classBlock: regData.classBlock,
-        companyId: regData.companyId,
-        avatarUrl: regData.avatarUrl,
-        targetHours: 240,
-        renderedHours: 0,
-        enrollmentStatus: 'not_enrolled',
-        status: 'active',
+      // Server provisions the auth.users entry (email/password flow) and mirrors server-side
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...regData, authUserId }),
       });
-    }
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(text || 'Registration failed (invalid response from server)');
+      }
+      if (!res.ok) throw new Error(data.error || 'Registration failed');
 
-    // Run state machine: confirms rows exist and permanently locks into respective role
-    await syncAndVerifyRole();
-    await refreshData();
+      // Email/password registration: establish a real Supabase session before writing rows
+      if (!authUserId && regData.password && supabase) {
+        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: regData.password,
+        });
+        if (signInErr) {
+          throw new Error(`Account created, but sign-in failed: ${signInErr.message}`);
+        }
+        authUserId = signInData.user?.id;
+      }
+
+      const effectiveAuthUid = authUserId || data.user?.id;
+
+      // Direct write to the respective Supabase table, awaited (throws on failure)
+      await syncProfileToSupabase({
+        authUserId: effectiveAuthUid,
+        id: effectiveAuthUid,
+        email: cleanEmail,
+        fullName: regData.fullName,
+        role: targetRole,
+        buId: regData.buId,
+        department: regData.department,
+        classBlock: regData.classBlock,
+        avatarUrl: regData.avatarUrl,
+        studentIdNumber: regData.buId,
+        coordinatorIdNumber: regData.buId,
+      });
+
+      if (targetRole === 'student') {
+        await syncStudentToSupabase({
+          authUserId: effectiveAuthUid,
+          id: effectiveAuthUid,
+          buId: regData.buId,
+          studentIdNumber: regData.buId,
+          fullName: regData.fullName,
+          email: cleanEmail,
+          degree: regData.department,
+          classBlock: regData.classBlock,
+          companyId: regData.companyId,
+          avatarUrl: regData.avatarUrl,
+          targetHours: 240,
+          renderedHours: 0,
+          enrollmentStatus: 'not_enrolled',
+          status: 'active',
+        });
+      }
+
+      // Run state machine: confirms rows exist and permanently locks into respective role
+      const status = await syncAndVerifyRole();
+      if (status !== 'STUDENT' && status !== 'COORDINATOR') {
+        throw new Error(
+          'Your profile was submitted but could not be confirmed in Supabase. Please check your connection and try again.'
+        );
+      }
+      refreshData();
+    } finally {
+      isProvisioningRef.current = false;
+    }
   };
 
   const handleLogout = async () => {
@@ -942,18 +993,8 @@ export default function App() {
   // a) While role verification is underway, do not allow main UI or dashboards to render.
   if (authState.status === 'LOADING') {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-100 font-sans selection:bg-[#F26522] selection:text-white">
-        <div className="text-center space-y-4 max-w-sm px-6">
-          <div className="w-12 h-12 border-3 border-[#F26522] border-t-transparent rounded-full animate-spin mx-auto" />
-          <div className="space-y-1">
-            <h2 className="text-sm font-bold tracking-wider uppercase text-slate-200">
-              Bicol University InternTrack
-            </h2>
-            <p className="text-xs text-slate-400">
-              Verifying role credentials with Supabase...
-            </p>
-          </div>
-        </div>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[#F26522] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -962,9 +1003,6 @@ export default function App() {
   if (authState.status === 'UNAUTHENTICATED' || authState.status === 'ONBOARDING') {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans selection:bg-[#F26522] selection:text-white">
-        {showSplash && authState.status === 'UNAUTHENTICATED' && (
-          <StartupSplash onDismiss={() => setShowSplash(false)} />
-        )}
         <AuthPage
           companies={companies}
           students={students}
@@ -1461,9 +1499,6 @@ export default function App() {
         onRegister={handleRegister}
         onLogout={handleLogout}
       />
-
-      {/* Startup Screen with Bicol University Emblem & Animated Progress */}
-      {showSplash && <StartupSplash onDismiss={() => setShowSplash(false)} />}
     </div>
   );
 }
