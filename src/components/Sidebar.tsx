@@ -44,7 +44,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Navigation Items
   const navItems = isCoordinator
     ? [
-        { id: 'dashboard', label: 'Coordinator Dashboard', icon: LayoutDashboard },
         { id: 'archive', label: 'Record Archive', icon: Archive, badge: 'Batches' },
         { id: 'enrollment', label: 'Enrollment & Deployment', icon: UserPlus },
         { id: 'attendance', label: 'Time & Attendance DTR', icon: Clock },
@@ -80,9 +79,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex flex-col h-full overflow-y-auto">
           {/* Top Brand Header without BU Logo */}
           <div className="p-5 border-b border-slate-800 bg-[#01040f]/90 flex items-center justify-between">
-            <div
-              className="cursor-pointer select-none"
+            <button
+              type="button"
+              className="cursor-pointer select-none text-left bg-transparent border-none p-0 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-[#F26522] rounded-md"
               onClick={() => handleNavClick(isCoordinator ? 'dashboard' : 'student-portal')}
+              aria-label="InternTrack - Return to Dashboard"
+              title="Return to Dashboard"
             >
               <FoldText
                 text="InternTrack"
@@ -104,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 fontSize="1.25rem"
                 fontWeight={800}
               />
-            </div>
+            </button>
 
             <button
               onClick={() => setIsMobileOpen(false)}

@@ -1113,22 +1113,26 @@ async function loadInitialDataFromSupabase() {
       console.warn('Groups table load error:', gErr);
     }
 
-    // 4. Load Attendances from attendances table
+    // 4. Load Attendances from attendances table (Strictly for enrolled & deployed students)
     try {
       const { data: attData } = await supabase
         .from('attendances')
         .select('*')
         .order('created_at', { ascending: false });
       if (attData && attData.length > 0) {
-        attendanceLogs = attData.map((a: any) => {
+        attendanceLogs = (attData.map((a: any) => {
           const matchedSt = students.find(s => s.id === a.student_id);
+          // Strictly exclude logs for students who are not enrolled/approved to preserve relational integrity
+          if (!matchedSt || matchedSt.enrollmentStatus !== 'approved' || !matchedSt.deploymentApproved) {
+            return null;
+          }
           return {
             id: a.id,
             studentId: a.student_id,
-            studentIdNumber: matchedSt?.buId || '',
-            studentName: matchedSt?.fullName || 'Student Intern',
-            companyId: matchedSt?.companyId || '',
-            companyName: matchedSt?.companyName || '',
+            studentIdNumber: matchedSt.buId || '',
+            studentName: matchedSt.fullName || 'Student Intern',
+            companyId: matchedSt.companyId || '',
+            companyName: matchedSt.companyName || '',
             date: a.date,
             expectedTimeIn: '08:00',
             actualTimeIn: a.time_in ? (a.time_in.includes('T') ? a.time_in.split('T')[1].slice(0, 5) : a.time_in) : '08:00',
@@ -1139,26 +1143,30 @@ async function loadInitialDataFromSupabase() {
             verificationStatus: 'verified',
             workstationIp: '192.168.10.155',
           };
-        });
+        }).filter(Boolean) as AttendanceLog[]);
       }
     } catch {}
 
-    // 5. Load Accomplishment Reports from accomplishment_reports table
+    // 5. Load Accomplishment Reports from accomplishment_reports table (Strictly for enrolled & deployed students)
     try {
       const { data: repData } = await supabase
         .from('accomplishment_reports')
         .select('*')
         .order('created_at', { ascending: false });
       if (repData && repData.length > 0) {
-        accomplishmentReports = repData.map((r: any) => {
+        accomplishmentReports = (repData.map((r: any) => {
           const matchedSt = students.find(s => s.id === r.student_id);
+          // Strictly exclude reports for students who are not enrolled/approved
+          if (!matchedSt || matchedSt.enrollmentStatus !== 'approved' || !matchedSt.deploymentApproved) {
+            return null;
+          }
           return {
             id: r.id,
             studentId: r.student_id,
-            studentIdNumber: matchedSt?.buId || '',
-            studentName: matchedSt?.fullName || 'Student Intern',
-            companyId: matchedSt?.companyId || '',
-            companyName: matchedSt?.companyName || '',
+            studentIdNumber: matchedSt.buId || '',
+            studentName: matchedSt.fullName || 'Student Intern',
+            companyId: matchedSt.companyId || '',
+            companyName: matchedSt.companyName || '',
             date: r.week_start || toIsoDate(r.created_at),
             weekNumber: 1,
             workCategory: (['System Testing & QA', 'Documentation', 'Frontend Dev', 'Backend Dev', 'Network & IT Support', 'Data Analytics'].find(cat => r.raw_task_logs?.startsWith(cat)) || 'Documentation') as any,
@@ -1169,7 +1177,7 @@ async function loadInitialDataFromSupabase() {
             obstaclesFaced: r.nlp_summary || '',
             createdAt: r.created_at,
           };
-        });
+        }).filter(Boolean) as AccomplishmentReport[]);
       }
     } catch {}
   } catch (e) {
@@ -1221,6 +1229,14 @@ let isoEvaluations = [
 
 export const app = express();
 app.use(express.json());
+
+// Prevent caching on API responses to guarantee real-time cross-client synchronization
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 
 // Normalize URL in case serverless handler or rewrite stripped /api prefix
 app.use((req, res, next) => {
@@ -1714,30 +1730,6 @@ app.use((req, res, next) => {
       });
     }
 
-    // Strict Role Isolation Enforcement
-    if (supabase) {
-      const targetRole = role || 'student';
-      if (targetRole === 'coordinator') {
-        const { data: stExists } = await supabase
-          .from('students')
-          .select('id')
-          .eq('email', cleanEmail)
-          .limit(1);
-        if (stExists && stExists.length > 0) {
-          return res.status(403).json({ error: 'This account is already registered as a Student.' });
-        }
-      } else if (targetRole === 'student') {
-        const { data: cpExists } = await supabase
-          .from('coordinators')
-          .select('id')
-          .eq('email', cleanEmail)
-          .limit(1);
-        if (cpExists && cpExists.length > 0) {
-          return res.status(403).json({ error: 'This account is already registered as a Coordinator.' });
-        }
-      }
-    }
-
     let user = users.find((u) => u.email.toLowerCase() === cleanEmail);
 
     // Auto-resolve user from Supabase coordinators or students / auth.users if registered
@@ -1894,15 +1886,13 @@ app.use((req, res, next) => {
       });
     }
 
+    // Respect user's verified role in database; don't reject on role tab difference
     if (role && user.role !== role) {
-      // If student role is requested and email is a valid @bicol-u.edu.ph address, adapt role to student
-      if (role === 'student' && isBuEmail) {
+      if (role === 'student' && isBuEmail && !cleanEmail.match(/dean|chair|coordinator/)) {
         user.role = 'student';
         user.buId = extractStudentIdFromEmail(cleanEmail);
       } else if (role === 'coordinator' && isBuEmail && !cleanEmail.match(/\d{4}-/)) {
         user.role = 'coordinator';
-      } else {
-        return res.status(403).json({ error: `Account exists as ${user.role}, not ${role}` });
       }
     }
 
@@ -2769,7 +2759,8 @@ app.use((req, res, next) => {
   });
 
   // --- Class Block Batches & Record Archive Endpoints ---
-  app.get('/api/batches', (req: Request, res: Response) => {
+  app.get('/api/batches', async (req: Request, res: Response) => {
+    await loadInitialDataFromSupabase();
     const { isArchived, semester, block } = req.query;
 
     let result = classBatches.map((batch) => {
@@ -2884,12 +2875,15 @@ app.use((req, res, next) => {
   // System Stats
   app.get('/api/stats', async (req: Request, res: Response) => {
     await loadInitialDataFromSupabase();
-    const totalStudents = students.length;
+    const enrolledStudents = students.filter(
+      (s) => s.enrollmentStatus === 'approved' && s.deploymentApproved && !s.isArchived
+    );
+    const totalStudents = enrolledStudents.length;
     const activeGroups = groups.filter((g) => g.status === 'active').length;
     const partnerCompanies = companies.length;
-    const totalRendered = students.reduce((acc, s) => acc + s.renderedHours, 0);
+    const totalRendered = enrolledStudents.reduce((acc, s) => acc + s.renderedHours, 0);
     const avgAttendance = (
-      students.reduce((acc, s) => acc + s.attendanceRate, 0) / (totalStudents || 1)
+      enrolledStudents.reduce((acc, s) => acc + s.attendanceRate, 0) / (totalStudents || 1)
     ).toFixed(1);
     const pendingAlerts = attendanceAlerts.filter((a) => a.status === 'pending_review').length;
 
@@ -3450,7 +3444,8 @@ app.use((req, res, next) => {
   });
 
   // Attendance Records & Online Logging
-  app.get('/api/attendance', (req: Request, res: Response) => {
+  app.get('/api/attendance', async (req: Request, res: Response) => {
+    await loadInitialDataFromSupabase();
     res.json(attendanceLogs);
   });
 
@@ -3458,15 +3453,9 @@ app.use((req, res, next) => {
     const { studentId, workstationIp, remarks, dtrImageLink, shiftNumber = 1 } = req.body;
     const student = findStudentRecord(studentId);
 
-    if (student.enrollmentStatus === 'pending_approval') {
+    if (student.enrollmentStatus !== 'approved' || !student.deploymentApproved) {
       return res.status(403).json({
-        error: 'Cannot record Time-In. Your internship enrollment is pending coordinator approval.',
-      });
-    }
-
-    if (student.enrollmentStatus === 'declined') {
-      return res.status(403).json({
-        error: `Cannot record Time-In. Your enrollment was declined: ${student.enrollmentDeclinedReason || 'Contact coordinator'}`,
+        error: 'Cannot record Time-In. Your internship enrollment has not been approved and deployed by your coordinator.',
       });
     }
 
@@ -3529,6 +3518,12 @@ app.use((req, res, next) => {
     const { studentId, remarks, dtrImageLink, shiftNumber } = req.body;
     const student = findStudentRecord(studentId);
 
+    if (student.enrollmentStatus !== 'approved' || !student.deploymentApproved) {
+      return res.status(403).json({
+        error: 'Cannot record Time-Out. Your internship enrollment has not been approved and deployed by your coordinator.',
+      });
+    }
+
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     const todayStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -3574,13 +3569,20 @@ app.use((req, res, next) => {
   });
 
   // Daily Accomplishment Reports
-  app.get('/api/accomplishments', (req: Request, res: Response) => {
+  app.get('/api/accomplishments', async (req: Request, res: Response) => {
+    await loadInitialDataFromSupabase();
     res.json(accomplishmentReports);
   });
 
   app.post('/api/accomplishments', (req: Request, res: Response) => {
     const { studentId, date, workCategory, taskTitle, taskDescription, supervisorAssignedDuty, hoursSpent, taskStatus, obstaclesFaced } = req.body;
     const student = findStudentRecord(studentId);
+
+    if (student.enrollmentStatus !== 'approved' || !student.deploymentApproved) {
+      return res.status(403).json({
+        error: 'Cannot record Accomplishment Report. Your internship enrollment has not been approved and deployed by your coordinator.',
+      });
+    }
 
     const todayStr = date ? toIsoDate(date) : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 

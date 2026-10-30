@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Clock,
   LogIn,
@@ -36,8 +36,27 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
   isCoordinator = false,
   coordinatorName,
 }) => {
+  // Strictly filter enrolled students for coordinator views & DTR logs
+  const enrolledStudents = useMemo(() => {
+    return students.filter(
+      (s) => s.enrollmentStatus === 'approved' && s.deploymentApproved && !s.isArchived
+    );
+  }, [students]);
+
+  const enrolledStudentIds = useMemo(() => {
+    return new Set(enrolledStudents.map((s) => s.id));
+  }, [enrolledStudents]);
+
+  const activeStudentList = isCoordinator ? enrolledStudents : students;
+
+  const validAttendanceLogs = useMemo(() => {
+    return isCoordinator
+      ? attendanceLogs.filter((l) => enrolledStudentIds.has(l.studentId))
+      : attendanceLogs;
+  }, [attendanceLogs, enrolledStudentIds, isCoordinator]);
+
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
-    students[0]?.id || ''
+    activeStudentList[0]?.id || ''
   );
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
   const [remarks, setRemarks] = useState('');
@@ -55,7 +74,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const currentStudent = students.find((s) => s.id === selectedStudentId) || students[0];
+  const currentStudent = activeStudentList.find((s) => s.id === selectedStudentId) || activeStudentList[0] || students[0];
 
   // Check today's log for the student
   const todayStr = currentTime.toLocaleDateString('en-US', {
@@ -63,7 +82,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
     day: 'numeric',
     year: 'numeric',
   });
-  const currentStudentLog = attendanceLogs.find(
+  const currentStudentLog = validAttendanceLogs.find(
     (l) => l.studentId === currentStudent?.id && l.date === todayStr
   );
 
@@ -109,7 +128,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
   };
 
   // Filtered attendance logs for the DTR Audit Log, sorted chronologically by date
-  const filteredLogs = attendanceLogs
+  const filteredLogs = validAttendanceLogs
     .filter((log) => {
       const matchesSearch =
         log.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -128,10 +147,10 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.studentName.localeCompare(b.studentName));
 
   // Coordinator stats calculations
-  const presentTodayCount = attendanceLogs.filter((l) => l.actualTimeIn).length;
-  const activeOnDutyCount = attendanceLogs.filter((l) => l.actualTimeIn && !l.actualTimeOut).length;
-  const completedDutiesCount = attendanceLogs.filter((l) => l.actualTimeIn && l.actualTimeOut).length;
-  const lateCount = attendanceLogs.filter((l) => l.status === 'late').length;
+  const presentTodayCount = validAttendanceLogs.filter((l) => l.actualTimeIn).length;
+  const activeOnDutyCount = validAttendanceLogs.filter((l) => l.actualTimeIn && !l.actualTimeOut).length;
+  const completedDutiesCount = validAttendanceLogs.filter((l) => l.actualTimeIn && l.actualTimeOut).length;
+  const lateCount = validAttendanceLogs.filter((l) => l.status === 'late').length;
 
   return (
     <div className="space-y-6">
@@ -284,7 +303,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                   }}
                   className="py-1.5 px-3 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-white font-semibold focus:outline-none focus:ring-1 focus:ring-[#F26522]"
                 >
-                  {students.map((s) => (
+                  {activeStudentList.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.fullName} ({s.companyName.split('(')[0]})
                     </option>

@@ -81,7 +81,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsLoading(true);
     setErrorMsg(null);
     try {
-      await onLogin({ email, password, role: roleMode });
+      await onLogin({ email: email.trim(), password, role: roleMode });
       onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Login failed. Please verify credentials.');

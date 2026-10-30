@@ -102,7 +102,12 @@ export default function App() {
   const refreshData = async () => {
     const safeFetch = async (url: string, fallback: any = []) => {
       try {
-        const r = await fetch(url);
+        const cacheBuster = `_t=${Date.now()}`;
+        const fetchUrl = url.includes('?') ? `${url}&${cacheBuster}` : `${url}?${cacheBuster}`;
+        const r = await fetch(fetchUrl, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        });
         if (!r.ok) return fallback;
         const text = await r.text();
         return JSON.parse(text);
@@ -376,8 +381,19 @@ export default function App() {
       refreshData();
     });
 
+    // Window focus & interval auto-polling (every 15s) to guarantee persistent real-time parity across tabs/devices
+    const onFocus = () => refreshData();
+    window.addEventListener('focus', onFocus);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refreshData();
+      }
+    }, 15000);
+
     return () => {
       unsubscribe();
+      window.removeEventListener('focus', onFocus);
+      clearInterval(interval);
     };
   }, []);
 
@@ -404,18 +420,12 @@ export default function App() {
     avatarUrl?: string;
   }) => {
     if (!credentials.email) throw new Error('Institutional email is required.');
+    if (!credentials.password) throw new Error('Password is required.');
     const cleanEmail = credentials.email.trim().toLowerCase();
-    const targetRole = credentials.role || 'coordinator';
 
     isProvisioningRef.current = true;
     try {
-      // Strict Role Isolation Pre-check
-      const isolation = await checkRoleIsolation(cleanEmail, targetRole);
-      if (!isolation.allowed) {
-        throw new Error(isolation.message);
-      }
-
-      if (credentials.password && supabase) {
+      if (supabase) {
         const { error } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password: credentials.password,
@@ -425,12 +435,17 @@ export default function App() {
         }
       }
 
-      // Sync server memory session
+      // Sync server memory session (non-blocking)
       try {
         await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(credentials),
+          body: JSON.stringify({
+            email: cleanEmail,
+            role: credentials.role,
+            fullName: credentials.fullName,
+            avatarUrl: credentials.avatarUrl,
+          }),
         });
       } catch (e) {
         console.warn('Server login note:', e);
@@ -1087,7 +1102,6 @@ export default function App() {
 
   const headerNavItems = isCoordinator
     ? [
-        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { id: 'archive', label: 'Record Archive', icon: Archive },
         { id: 'enrollment', label: 'Enrollment & Deployment', icon: UserPlus },
         { id: 'attendance', label: 'DTR Attendance', icon: Clock },
@@ -1128,16 +1142,19 @@ export default function App() {
               <Menu className="w-5 h-5" />
             </button>
 
-            <div
+            <button
+              type="button"
               onClick={() => setActiveTab(isCoordinator ? 'dashboard' : 'student-portal')}
-              className="flex items-center cursor-pointer select-none active:scale-95 transition-transform"
+              className="flex items-center cursor-pointer select-none active:scale-95 transition-transform bg-transparent border-none p-0 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-[#F26522] rounded-md text-left"
+              aria-label="InternTrack - Return to Dashboard"
+              title="Return to Dashboard"
             >
               <span className="text-xl sm:text-2xl font-black tracking-tight font-sans">
                 <span className="text-[#3b82f6]">I</span>
                 <span className="text-white">ntern</span>
                 <span className="text-[#F26522]">Track</span>
               </span>
-            </div>
+            </button>
           </div>
 
           {/* Center: Navigation Modules (displayed between in header on web version full screen) */}

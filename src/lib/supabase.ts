@@ -1081,6 +1081,22 @@ export function subscribeToRealtimeData(onChangeCallback: (payload: any) => void
           onChangeCallback(payload);
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'coordinators' },
+        (payload) => {
+          console.log('[SUPABASE REALTIME] Coordinators changed:', payload.eventType);
+          onChangeCallback(payload);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'groups' },
+        (payload) => {
+          console.log('[SUPABASE REALTIME] Groups changed:', payload.eventType);
+          onChangeCallback(payload);
+        }
+      )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           console.log('[SUPABASE REALTIME] Live channels subscribed successfully.');

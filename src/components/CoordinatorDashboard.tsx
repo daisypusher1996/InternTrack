@@ -130,19 +130,28 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
     });
   }, [students, currentUser]);
 
-  // Pending Enrollments Queue (Students about to start Student Internship)
+  // Pending Enrollments Queue (Students about to start Student Internship or awaiting cohort approvals)
   const pendingEnrollments = assignedStudents.filter(
-    (s) => s.enrollmentStatus === 'pending_approval' && !s.isArchived
+    (s) =>
+      (s.enrollmentStatus === 'pending_approval' || s.enrollmentStatus === 'pending_peer_approval') &&
+      !s.isArchived
   );
 
-  // Unfinished Interns vs Approved Interns Lists
-  const unfinishedInternsList = assignedStudents.filter(
-    (s) => !s.isArchived && !s.completionApproved && s.renderedHours < s.targetHours
+  // Strictly filter students who are officially enrolled & deployed
+  const enrolledAssignedStudents = useMemo(() => {
+    return assignedStudents.filter(
+      (s) => s.enrollmentStatus === 'approved' && s.deploymentApproved && !s.isArchived
+    );
+  }, [assignedStudents]);
+
+  // Unfinished Interns vs Approved Interns Lists (Strictly enrolled & deployed students)
+  const unfinishedInternsList = enrolledAssignedStudents.filter(
+    (s) => !s.completionApproved && s.renderedHours < s.targetHours
   );
-  const approvedInternsList = assignedStudents.filter(
-    (s) => !s.isArchived && (s.completionApproved || s.renderedHours >= s.targetHours)
+  const approvedInternsList = enrolledAssignedStudents.filter(
+    (s) => s.completionApproved || s.renderedHours >= s.targetHours
   );
-  const activeUnarchivedList = assignedStudents.filter((s) => !s.isArchived);
+  const activeUnarchivedList = enrolledAssignedStudents;
 
   const displayedInterns =
     internFilter === 'unfinished'
@@ -151,25 +160,22 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
       ? approvedInternsList
       : activeUnarchivedList;
 
-  // Handled Course/Blocks list: strictly lists cohort only if at least one student has enrolled to that course & block
+  // Handled Course/Blocks list: strictly lists cohort only if at least one enrolled & deployed student belongs to it
   const availableBlocks = useMemo(() => {
-    const blocksWithEnrolledStudents = assignedStudents
+    const blocksWithEnrolledStudents = enrolledAssignedStudents
       .filter(
         (s) =>
-          !s.isArchived &&
           s.classBlock &&
           s.classBlock.trim() !== '' &&
-          s.classBlock !== 'Unassigned Block' &&
-          s.enrollmentStatus &&
-          s.enrollmentStatus !== 'not_enrolled'
+          s.classBlock !== 'Unassigned Block'
       )
       .map((s) => s.classBlock!.trim());
 
     return Array.from(new Set(blocksWithEnrolledStudents)).sort();
-  }, [assignedStudents]);
+  }, [enrolledAssignedStudents]);
 
   // Students in selected block
-  const blockStudents = assignedStudents.filter((s) => s.classBlock === selectedBlock && !s.isArchived);
+  const blockStudents = enrolledAssignedStudents.filter((s) => s.classBlock === selectedBlock);
   const blockTotalHours = blockStudents.reduce((acc, s) => acc + s.renderedHours, 0);
 
   // Today's date string
@@ -179,9 +185,18 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
     year: 'numeric',
   });
 
-  // Today's DTR logs for selected block
+  // Filter attendance logs to only include enrolled students to preserve relational integrity
+  const enrolledStudentIds = useMemo(() => {
+    return new Set(enrolledAssignedStudents.map((s) => s.id));
+  }, [enrolledAssignedStudents]);
+
+  const filteredAttendanceLogs = useMemo(() => {
+    return attendanceLogs.filter((l) => enrolledStudentIds.has(l.studentId));
+  }, [attendanceLogs, enrolledStudentIds]);
+
+  // Today's DTR logs for selected block (from filtered logs)
   const blockLogsToday = blockStudents.map((s) => {
-    const log = attendanceLogs.find(
+    const log = filteredAttendanceLogs.find(
       (l) => l.studentId === s.id && (l.date === todayStr || l.date.includes('2026'))
     );
     return { student: s, log };
@@ -342,15 +357,15 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
         {/* Card 1: Enrolled Interns */}
         <div className="bg-white dark:bg-[#1e1e1e] border border-slate-200 dark:border-[#2a2a2a] rounded-lg p-5 shadow-xs flex flex-col justify-between transition-colors">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-[#9CA3AF] uppercase tracking-wider">Total Interns</span>
+            <span className="text-xs font-semibold text-slate-500 dark:text-[#9CA3AF] uppercase tracking-wider">Total Enrolled Interns</span>
             <div className="p-2 rounded-lg bg-blue-50 dark:bg-[#2a2a2a] text-[#0875e1]">
               <Users className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-3">
-            <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{assignedStudents.length}</div>
+            <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{enrolledAssignedStudents.length}</div>
             <div className="text-xs text-slate-500 dark:text-[#9CA3AF] mt-1 flex items-center gap-1.5">
-              <span className="text-[#10B981] font-bold">Assigned to You</span>
+              <span className="text-[#10B981] font-bold">Enrolled & Deployed</span>
               <span>•</span>
               <span>{availableBlocks.length} Course Block{availableBlocks.length === 1 ? '' : 's'}</span>
             </div>
@@ -385,7 +400,7 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
           </div>
           <div className="mt-3">
             <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {assignedStudents.reduce((acc, s) => acc + s.renderedHours, 0).toFixed(0)}
+              {enrolledAssignedStudents.reduce((acc, s) => acc + s.renderedHours, 0).toFixed(0)}
               <span className="text-lg font-bold text-slate-500 dark:text-[#9CA3AF] ml-1">hrs</span>
             </div>
             <div className="text-xs text-slate-500 dark:text-[#9CA3AF] mt-1 flex items-center gap-1.5">
@@ -581,14 +596,14 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
         ) : (
           <div className="space-y-3">
             {availableBlocks.map((blk) => {
-              const currStudents = assignedStudents.filter((s) => s.classBlock === blk && !s.isArchived);
-            const currHours = currStudents.reduce((acc, s) => acc + s.renderedHours, 0);
-            const currLogsToday = currStudents.map((s) => {
-              const log = attendanceLogs.find(
-                (l) => l.studentId === s.id && (l.date === todayStr || l.date.includes('2026'))
-              );
-              return { student: s, log };
-            });
+              const currStudents = enrolledAssignedStudents.filter((s) => s.classBlock === blk);
+              const currHours = currStudents.reduce((acc, s) => acc + s.renderedHours, 0);
+              const currLogsToday = currStudents.map((s) => {
+                const log = filteredAttendanceLogs.find(
+                  (l) => l.studentId === s.id && (l.date === todayStr || l.date.includes('2026'))
+                );
+                return { student: s, log };
+              });
             const currReports = recentReports.filter((r) =>
               currStudents.some((s) => s.id === r.studentId)
             );
