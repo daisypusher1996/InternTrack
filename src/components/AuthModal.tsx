@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { User, Company, Student, BU_COURSES } from '../types';
 import { signInWithGoogle, extractStudentIdFromEmail } from '../lib/supabase';
+import FoldText from './FoldText';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -221,11 +222,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Header */}
         <div className="bg-[#020617] text-white p-5 px-6 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center">
-            <span className="text-xl font-black tracking-tight select-none">
-              <span className="text-[#3b82f6]">I</span>
-              <span className="text-white">ntern</span>
-              <span className="text-[#F26522]">Track</span>
-            </span>
+            <FoldText
+              text="InternTrack"
+              foldStyle="paper"
+              splitBy="char"
+              hinge="top"
+              trigger="mount"
+              foldAngle={92}
+              duration={0.65}
+              stagger={0.045}
+              staggerFrom="start"
+              ease="power3.out"
+              loopDelay={1.4}
+              hoverRefold={true}
+              refoldRadius={100}
+              refoldAngle={45}
+              perspective={700}
+              creaseShading={0.55}
+              fontSize="1.25rem"
+              fontWeight={800}
+            />
           </div>
           <button
             onClick={onClose}

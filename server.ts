@@ -2074,6 +2074,7 @@ app.use((req, res, next) => {
             attendanceRate: 100,
             status: 'active',
             enrollmentStatus: 'not_enrolled',
+            avatarUrl: sp.avatar_url || '',
           };
           students.push(matchedStudent);
         } else {
@@ -2100,6 +2101,7 @@ app.use((req, res, next) => {
               attendanceRate: 100,
               status: 'active',
               enrollmentStatus: 'not_enrolled',
+              avatarUrl: pr.avatar_url || '',
             };
             students.push(matchedStudent);
           }
@@ -2139,6 +2141,7 @@ app.use((req, res, next) => {
           attendanceRate: 100,
           status: 'active',
           enrollmentStatus: 'not_enrolled',
+          avatarUrl: '',
         };
         students.push(matchedStudent);
       } else {
@@ -2359,6 +2362,7 @@ app.use((req, res, next) => {
                 attendanceRate: 100,
                 status: 'active',
                 enrollmentStatus: 'not_enrolled',
+                avatarUrl: sp.avatar_url || '',
               };
               students.push(pStudent);
             } else {
@@ -2385,6 +2389,7 @@ app.use((req, res, next) => {
                   attendanceRate: 100,
                   status: 'active',
                   enrollmentStatus: 'not_enrolled',
+                  avatarUrl: pr.avatar_url || '',
                 };
                 students.push(pStudent);
               }
@@ -2421,10 +2426,13 @@ app.use((req, res, next) => {
             attendanceRate: 100,
             status: 'active',
             enrollmentStatus: 'not_enrolled',
+            avatarUrl: '',
           };
           students.push(pStudent);
         }
-        validatedPeers.push(pStudent);
+        if (pStudent) {
+          validatedPeers.push(pStudent);
+        }
       }
 
       // Create Group Cohort

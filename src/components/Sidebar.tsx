@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { User } from '../types';
 import { ThemeToggle } from './ThemeToggle';
+import FoldText from './FoldText';
 
 interface SidebarProps {
   activeTab: string;
@@ -80,14 +81,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* Top Brand Header without BU Logo */}
           <div className="p-5 border-b border-slate-800 bg-[#01040f]/90 flex items-center justify-between">
             <div
-              className="cursor-pointer select-none active:scale-95 transition-transform"
+              className="cursor-pointer select-none"
               onClick={() => handleNavClick(isCoordinator ? 'dashboard' : 'student-portal')}
             >
-              <span className="text-xl font-black tracking-tight">
-                <span className="text-[#3b82f6]">I</span>
-                <span className="text-white">ntern</span>
-                <span className="text-[#F26522]">Track</span>
-              </span>
+              <FoldText
+                text="InternTrack"
+                foldStyle="paper"
+                splitBy="char"
+                hinge="top"
+                trigger="scroll"
+                foldAngle={92}
+                duration={0.65}
+                stagger={0.045}
+                staggerFrom="start"
+                ease="power3.out"
+                loopDelay={1.4}
+                hoverRefold={true}
+                refoldRadius={100}
+                refoldAngle={45}
+                perspective={700}
+                creaseShading={0.55}
+                fontSize="1.25rem"
+                fontWeight={800}
+              />
             </div>
 
             <button

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Company, Student, BU_COURSES } from '../types';
 import { ThemeToggle } from './ThemeToggle';
+import FoldText from './FoldText';
 import {
   signInWithGoogle,
   checkGoogleOAuthStatus,
@@ -423,11 +424,26 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         {/* Top Header Badge */}
         <div className="relative z-10 space-y-4">
           <div className="flex items-center gap-3">
-            <span className="text-3xl xl:text-4xl font-black tracking-tight font-sans">
-              <span className="text-[#3b82f6]">I</span>
-              <span className="text-white">ntern</span>
-              <span className="text-[#F26522]">Track</span>
-            </span>
+            <FoldText
+              text="InternTrack"
+              foldStyle="paper"
+              splitBy="char"
+              hinge="top"
+              trigger="scroll"
+              foldAngle={92}
+              duration={0.65}
+              stagger={0.045}
+              staggerFrom="start"
+              ease="power3.out"
+              loopDelay={1.4}
+              hoverRefold={true}
+              refoldRadius={140}
+              refoldAngle={45}
+              perspective={700}
+              creaseShading={0.55}
+              fontSize="clamp(2.75rem, 5vw, 4.25rem)"
+              fontWeight={800}
+            />
           </div>
         </div>
 
@@ -458,11 +474,33 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         {/* Top Bar inside the form pane */}
         <div className="flex items-center justify-between pb-6 sm:pb-8">
           <div className="flex items-center lg:hidden">
-            <span className="text-2xl font-black tracking-tight font-sans">
-              <span className="text-[#3b82f6]">I</span>
-              <span className="text-slate-900 dark:text-white">ntern</span>
-              <span className="text-[#F26522]">Track</span>
-            </span>
+            <FoldText
+              text="InternTrack"
+              foldStyle="paper"
+              splitBy="char"
+              hinge="top"
+              trigger="scroll"
+              foldAngle={92}
+              duration={0.65}
+              stagger={0.045}
+              staggerFrom="start"
+              ease="power3.out"
+              loopDelay={1.4}
+              hoverRefold={true}
+              refoldRadius={140}
+              refoldAngle={45}
+              perspective={700}
+              creaseShading={0.55}
+              fontSize="1.75rem"
+              fontWeight={800}
+              charColors={(char, idx) =>
+                idx === 0
+                  ? 'text-[#3b82f6]'
+                  : idx <= 5
+                  ? 'text-slate-900 dark:text-white'
+                  : 'text-[#F26522]'
+              }
+            />
           </div>
           <div className="hidden lg:block" />
 
