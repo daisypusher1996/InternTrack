@@ -191,6 +191,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
       return;
     }
 
+    if (!regPassword || regPassword.length < 6) {
+      setErrorMsg('Password must be at least 6 characters in length.');
+      setIsLoading(false);
+      return;
+    }
+
     if (!regEmail.trim() || !regFullName.trim()) {
       setErrorMsg('Full name and institutional email are required.');
       setIsLoading(false);

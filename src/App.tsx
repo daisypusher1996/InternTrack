@@ -461,6 +461,9 @@ export default function App() {
 
   const handleRegister = async (regData: any) => {
     if (!regData.email) throw new Error('Institutional email is required.');
+    if (regData.password && String(regData.password).trim().length < 6) {
+      throw new Error('Password must be at least 6 characters in length.');
+    }
     const cleanEmail = regData.email.trim().toLowerCase();
     const targetRole: 'coordinator' | 'student' = regData.role === 'coordinator' ? 'coordinator' : 'student';
 
@@ -491,8 +494,12 @@ export default function App() {
       }
       if (!res.ok) throw new Error(data.error || 'Registration failed');
 
+      if (data.authUserId && !authUserId) {
+        authUserId = data.authUserId;
+      }
+
       // Email/password registration: establish a real Supabase session before writing rows
-      if (!authUserId && regData.password && supabase) {
+      if (regData.password && supabase) {
         const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password: regData.password,
@@ -500,10 +507,12 @@ export default function App() {
         if (signInErr) {
           throw new Error(`Account created, but sign-in failed: ${signInErr.message}`);
         }
-        authUserId = signInData.user?.id;
+        if (signInData?.user?.id) {
+          authUserId = signInData.user.id;
+        }
       }
 
-      const effectiveAuthUid = authUserId || data.user?.id;
+      const effectiveAuthUid = authUserId || data.authUserId || data.user?.id;
 
       // Direct write to the respective Supabase table, awaited (throws on failure)
       await syncProfileToSupabase({

@@ -122,6 +122,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       effectiveBlock = chosenBlock;
     }
 
+    if (!password || password.length < 6) {
+      setErrorMsg('Password must be at least 6 characters in length.');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       await onRegister({
         fullName: regFullName,

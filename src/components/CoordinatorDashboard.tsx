@@ -119,11 +119,8 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
       ) {
         return true;
       }
-      // If student has no designated coordinator, display under default/lead coordinator
-      const isLeadCoordinator =
-        currentUser.fullName?.toLowerCase().includes('preña') ||
-        currentUser.id === 'user-1';
-      if (isLeadCoordinator && !s.coordinatorId && !s.coordinatorName) {
+      // If student has no designated coordinator, display under current coordinator so they don't get lost
+      if (!s.coordinatorId && !s.coordinatorName) {
         return true;
       }
       return false;
