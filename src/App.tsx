@@ -50,7 +50,16 @@ import {
   syncAttendanceToSupabase,
   syncAccomplishmentToSupabase,
   subscribeToRealtimeData,
+  checkRoleIsolation,
+  isSupabaseConfigured,
 } from './lib/supabase';
+
+export type AuthState =
+  | { status: 'LOADING' }
+  | { status: 'UNAUTHENTICATED' }
+  | { status: 'ONBOARDING'; authUser: any; error?: string }
+  | { status: 'COORDINATOR'; user: User; coordinator: any }
+  | { status: 'STUDENT'; user: User; student: Student };
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -60,24 +69,11 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [showSplash, setShowSplash] = useState<boolean>(true);
 
-  // Authentication & Current User State (Persisted in localStorage so reloads preserve login and progress)
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    try {
-      const saved = localStorage.getItem('interntrack_current_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-
-  // Keep localStorage synchronized whenever currentUser updates
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('interntrack_current_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('interntrack_current_user');
-    }
-  }, [currentUser]);
+  // Strict Role-Checking State Machine State (Directive 3)
+  const [authState, setAuthState] = useState<AuthState>({ status: 'LOADING' });
+  const [userState, setUserState] = useState<User | null>(null);
+  const currentUser = userState || (authState.status === 'COORDINATOR' || authState.status === 'STUDENT' ? authState.user : null);
+  const setCurrentUser = setUserState;
 
   // Core Data States
   const [stats, setStats] = useState<SystemStats | null>(null);
@@ -160,37 +156,172 @@ export default function App() {
     }
   };
 
+  // Rigid Role-Checking State Machine (Directive 3)
+  const syncAndVerifyRole = async (): Promise<void> => {
+    try {
+      if (!isSupabaseConfigured || !supabase) {
+        setAuthState({ status: 'UNAUTHENTICATED' });
+        setCurrentUser(null);
+        return;
+      }
+
+      // a) Await the Supabase auth session
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr || !sessionData?.session?.user) {
+        setAuthState({ status: 'UNAUTHENTICATED' });
+        setCurrentUser(null);
+        return;
+      }
+
+      const authUser = sessionData.session.user;
+      const authUserId = authUser.id;
+      const cleanEmail = (authUser.email || '').toLowerCase().trim();
+
+      // b) Concurrently query both students and coordinators tables
+      const [coordQuery, studentQuery] = await Promise.all([
+        supabase
+          .from('coordinators')
+          .select('*')
+          .or(`auth_user_id.eq.${authUserId},id.eq.${authUserId},email.eq.${cleanEmail}`)
+          .limit(1),
+        supabase
+          .from('students')
+          .select('*')
+          .or(`auth_user_id.eq.${authUserId},id.eq.${authUserId},email.eq.${cleanEmail}`)
+          .limit(1),
+      ]);
+
+      const coordRecord = coordQuery.data && coordQuery.data.length > 0 ? coordQuery.data[0] : null;
+      const studentRecord = studentQuery.data && studentQuery.data.length > 0 ? studentQuery.data[0] : null;
+
+      // Strict Role Isolation Enforcement: A single user CANNOT exist in both tables
+      if (coordRecord && studentRecord) {
+        console.error('[CRITICAL] Cross-signup conflict! User exists in both tables:', { authUserId, cleanEmail });
+        setAuthState({
+          status: 'ONBOARDING',
+          authUser,
+          error: 'Cross-signup conflict: This account is registered in both Coordinator and Student tables. Please contact administrator.',
+        });
+        setCurrentUser(null);
+        return;
+      }
+
+      // c) If record found ONLY in students, permanently lock user into Student dashboard
+      if (studentRecord && !coordRecord) {
+        const studentUser: User = {
+          id: studentRecord.id || authUserId,
+          email: cleanEmail,
+          fullName: studentRecord.full_name || authUser.user_metadata?.full_name || cleanEmail.split('@')[0],
+          role: 'student',
+          buId: studentRecord.bu_id || authUser.user_metadata?.bu_id || extractStudentIdFromEmail(cleanEmail),
+          department: studentRecord.department || authUser.user_metadata?.department || 'Department of Computer Science',
+          classBlock: studentRecord.class_block || authUser.user_metadata?.class_block || '',
+          avatarUrl: studentRecord.avatar_url || authUser.user_metadata?.avatar_url || '',
+          studentProfile: studentRecord,
+        };
+        setCurrentUser(studentUser);
+        setActiveTab('student-portal');
+        setAuthState({
+          status: 'STUDENT',
+          user: studentUser,
+          student: studentRecord,
+        });
+        return;
+      }
+
+      // d) If record found ONLY in coordinators, permanently lock user into Coordinator dashboard
+      if (coordRecord && !studentRecord) {
+        const coordUser: User = {
+          id: coordRecord.id || authUserId,
+          email: cleanEmail,
+          fullName: coordRecord.full_name || authUser.user_metadata?.full_name || 'Practicum Coordinator',
+          role: 'coordinator',
+          buId: coordRecord.bu_id || 'FAC-2026-CS-004',
+          department: coordRecord.department || 'Department of Computer Science',
+          classBlock: '',
+          avatarUrl: coordRecord.avatar_url || authUser.user_metadata?.avatar_url || '',
+        };
+        setCurrentUser(coordUser);
+        setActiveTab('dashboard');
+        setAuthState({
+          status: 'COORDINATOR',
+          user: coordUser,
+          coordinator: coordRecord,
+        });
+        return;
+      }
+
+      // e) If neither is found, explicitly route them to Onboarding/Registration view
+      setCurrentUser(null);
+      setAuthState({
+        status: 'ONBOARDING',
+        authUser,
+      });
+    } catch (err: any) {
+      console.error('Role verification error:', err);
+      setAuthState({ status: 'UNAUTHENTICATED' });
+      setCurrentUser(null);
+    }
+  };
+
   useEffect(() => {
-    const initApp = async () => {
+    let isMounted = true;
+
+    const init = async () => {
       await refreshData();
-      if (supabase) {
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user?.email) {
-            const email = session.user.email.toLowerCase().trim();
-            const res = await fetch(`/api/auth/me?email=${encodeURIComponent(email)}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.user) {
-                setCurrentUser(data.user);
-                if (data.user.role === 'student') {
-                  setActiveTab('student-portal');
-                } else {
-                  setActiveTab('dashboard');
-                }
-              }
-            } else {
-              // Strict Account Verification on Login: No database record found -> prompt onboarding / registration
-              setCurrentUser(null);
-              setIsAuthModalOpen(true);
-            }
-          }
-        } catch (err) {
-          console.warn('Session verification note:', err);
-        }
+      if (isMounted) {
+        await syncAndVerifyRole();
       }
     };
-    initApp();
+    init();
+
+    // Listen to Supabase auth events
+    if (supabase) {
+      const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (!isMounted) return;
+        if (event === 'SIGNED_OUT') {
+          setCurrentUser(null);
+          setAuthState({ status: 'UNAUTHENTICATED' });
+        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          await syncAndVerifyRole();
+        }
+      });
+
+      // Handle OAuth popup window messages
+      const handlePopupMessage = async (e: MessageEvent) => {
+        if (e.data?.type === 'SUPABASE_AUTH_SUCCESS' || e.data?.type === 'OAUTH_AUTH_SUCCESS') {
+          if (e.data?.session && supabase) {
+            try {
+              await supabase.auth.setSession({
+                access_token: e.data.session.access_token,
+                refresh_token: e.data.session.refresh_token,
+              });
+            } catch (err) {
+              console.warn('Set session note:', err);
+            }
+          }
+          if (e.data?.code && supabase) {
+            try {
+              await supabase.auth.exchangeCodeForSession(e.data.code);
+            } catch (err) {
+              console.warn('Exchange code note:', err);
+            }
+          }
+          await syncAndVerifyRole();
+        }
+      };
+      window.addEventListener('message', handlePopupMessage);
+
+      return () => {
+        isMounted = false;
+        authListener.subscription.unsubscribe();
+        window.removeEventListener('message', handlePopupMessage);
+      };
+    }
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Supabase Realtime Subscription Listener for Instant Cross-Client Updates
@@ -219,214 +350,6 @@ export default function App() {
     return () => document.removeEventListener('click', handleClickOutside);
   }, []);
 
-  // Listen to Supabase session changes and OAuth redirects
-  useEffect(() => {
-    // If running in a popup window returning from Google OAuth, notify opener with tokens and close
-    if (window.opener && (window.location.hash.includes('access_token') || window.location.search.includes('code='))) {
-      try {
-        const searchParams = new URLSearchParams(window.location.search);
-        const code = searchParams.get('code');
-        if (code && supabase) {
-          supabase.auth.exchangeCodeForSession(code).then(({ data }) => {
-            if (data?.session) {
-              window.opener.postMessage({
-                type: 'SUPABASE_AUTH_SUCCESS',
-                session: data.session,
-                hash: window.location.hash,
-                search: window.location.search,
-              }, '*');
-              setTimeout(() => window.close(), 300);
-            } else {
-              window.opener.postMessage({
-                type: 'SUPABASE_AUTH_SUCCESS',
-                code,
-                hash: window.location.hash,
-                search: window.location.search,
-              }, '*');
-              setTimeout(() => window.close(), 300);
-            }
-          }).catch(() => {
-            window.opener.postMessage({
-              type: 'SUPABASE_AUTH_SUCCESS',
-              code,
-              hash: window.location.hash,
-              search: window.location.search,
-            }, '*');
-            setTimeout(() => window.close(), 300);
-          });
-        } else {
-          window.opener.postMessage({
-            type: 'SUPABASE_AUTH_SUCCESS',
-            hash: window.location.hash,
-            search: window.location.search,
-          }, '*');
-          setTimeout(() => window.close(), 500);
-        }
-      } catch (e) {
-        console.warn('Popup postMessage error:', e);
-      }
-    }
-
-    if (supabase) {
-      const processUserSession = async (session: any) => {
-        if (!session?.user) return;
-        const email = (session.user.email || '').trim().toLowerCase();
-        if (!email) return;
-
-        const isBuEmail = email.endsWith('@bicol-u.edu.ph');
-        const userMeta = session.user.user_metadata || {};
-        const targetRole: 'coordinator' | 'student' =
-          userMeta.role === 'coordinator' ? 'coordinator' : (isBuEmail ? 'student' : (userMeta.role || 'student'));
-
-        // Reject student accounts created without @bicol-u.edu.ph
-        if (targetRole === 'student' && !isBuEmail) {
-          console.warn('Rejected student sign-in: email does not end with @bicol-u.edu.ph:', email);
-          return;
-        }
-
-        const assumedStudentId = targetRole === 'student'
-          ? (userMeta.bu_id || extractStudentIdFromEmail(email))
-          : (userMeta.bu_id || 'FAC-2026-CS-004');
-        const fullName = userMeta.full_name || userMeta.name || email.split('@')[0];
-
-        // Single persistent check for user registration before redirecting to the student portal
-        let loggedInSuccessfully = false;
-        try {
-          const res = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, role: targetRole, fullName, avatarUrl: userMeta.avatar_url }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setCurrentUser(data.user);
-            loggedInSuccessfully = true;
-          }
-        } catch {}
-
-        if (!loggedInSuccessfully) {
-          try {
-            const res = await fetch('/api/auth/register', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                fullName,
-                email,
-                role: targetRole,
-                buId: assumedStudentId,
-                department: userMeta.department || 'Department of Computer Science',
-                classBlock: userMeta.class_block || 'BSCS 4-A',
-                avatarUrl: userMeta.avatar_url,
-              }),
-            });
-            if (res.ok) {
-              const data = await res.json();
-              setCurrentUser(data.user);
-            }
-          } catch (err) {
-            console.error('Session sign-up registration error:', err);
-          }
-        }
-
-        // Single persistent check: refresh data to ensure student profile is loaded in state before portal render
-        await refreshData();
-
-        if (targetRole === 'student') {
-          setActiveTab('student-portal');
-        } else {
-          setActiveTab('dashboard');
-        }
-      };
-
-      // Check URL search params for direct browser redirect with code (PKCE)
-      if (!window.opener && window.location.search.includes('code=')) {
-        const searchParams = new URLSearchParams(window.location.search);
-        const code = searchParams.get('code');
-        if (code) {
-          supabase.auth.exchangeCodeForSession(code).then(({ data }) => {
-            if (data?.session?.user && !currentUser) {
-              processUserSession(data.session).catch(console.error);
-            }
-          }).catch(console.warn);
-        }
-      }
-
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user && !currentUser) {
-          processUserSession(session).catch(console.error);
-        }
-      });
-
-      const { data: authListener } = supabase.auth.onAuthStateChange(
-        async (event, session) => {
-          if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user && !currentUser) {
-            processUserSession(session).catch(console.error);
-          }
-        }
-      );
-
-      // Listen for message from OAuth popup
-      const handlePopupMessage = async (e: MessageEvent) => {
-        if (e.data?.type === 'SUPABASE_AUTH_SUCCESS' || e.data?.type === 'OAUTH_AUTH_SUCCESS') {
-          if (e.data?.session && supabase) {
-            try {
-              await supabase.auth.setSession({
-                access_token: e.data.session.access_token,
-                refresh_token: e.data.session.refresh_token,
-              });
-            } catch (err) {
-              console.warn('Error setting session object:', err);
-            }
-          }
-          if (e.data?.code && supabase) {
-            try {
-              await supabase.auth.exchangeCodeForSession(e.data.code);
-            } catch (err) {
-              console.warn('Error exchanging code from popup:', err);
-            }
-          } else if (e.data?.search && supabase) {
-            const searchParams = new URLSearchParams(e.data.search);
-            const code = searchParams.get('code');
-            if (code) {
-              try {
-                await supabase.auth.exchangeCodeForSession(code);
-              } catch (err) {
-                console.warn('Error exchanging code from search params:', err);
-              }
-            }
-          }
-          if (e.data?.hash && supabase) {
-            try {
-              const params = new URLSearchParams(e.data.hash.replace(/^#/, ''));
-              const accessToken = params.get('access_token');
-              const refreshToken = params.get('refresh_token');
-              if (accessToken && refreshToken) {
-                await supabase.auth.setSession({
-                  access_token: accessToken,
-                  refresh_token: refreshToken,
-                });
-              }
-            } catch (err) {
-              console.warn('Error setting session from popup hash:', err);
-            }
-          }
-          if (supabase) {
-            const { data } = await supabase.auth.getSession();
-            if (data?.session?.user && !currentUser) {
-              processUserSession(data.session).catch(console.error);
-            }
-          }
-        }
-      };
-      window.addEventListener('message', handlePopupMessage);
-
-      return () => {
-        authListener.subscription.unsubscribe();
-        window.removeEventListener('message', handlePopupMessage);
-      };
-    }
-  }, [currentUser]);
-
   // Authentication Handlers
   const handleLogin = async (credentials: {
     email?: string;
@@ -435,6 +358,26 @@ export default function App() {
     fullName?: string;
     avatarUrl?: string;
   }) => {
+    if (!credentials.email) throw new Error('Institutional email is required.');
+    const cleanEmail = credentials.email.trim().toLowerCase();
+    const targetRole = credentials.role || 'coordinator';
+
+    // Strict Role Isolation Pre-check
+    const isolation = await checkRoleIsolation(cleanEmail, targetRole);
+    if (!isolation.allowed) {
+      throw new Error(isolation.message);
+    }
+
+    if (credentials.password && supabase) {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: credentials.password,
+      });
+      if (error) {
+        throw new Error(error.message);
+      }
+    }
+
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -449,16 +392,22 @@ export default function App() {
     }
     if (!res.ok) throw new Error(data.error || 'Authentication failed');
 
-    setCurrentUser(data.user);
-    if (data.user.role === 'student') {
-      setActiveTab('student-portal');
-    } else {
-      setActiveTab('dashboard');
-    }
+    // Run strict role verification state machine to lock into confirmed role
+    await syncAndVerifyRole();
     await refreshData();
   };
 
   const handleRegister = async (regData: any) => {
+    if (!regData.email) throw new Error('Institutional email is required.');
+    const cleanEmail = regData.email.trim().toLowerCase();
+    const targetRole = regData.role;
+
+    // Strict Role Isolation Pre-check
+    const isolation = await checkRoleIsolation(cleanEmail, targetRole);
+    if (!isolation.allowed) {
+      throw new Error(isolation.message);
+    }
+
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -475,7 +424,7 @@ export default function App() {
 
     const createdUserId = data.user?.id;
 
-    // Sync account profile to Supabase directly with the verified Auth User UUID
+    // Direct write to respective Supabase table and await successful response before proceeding
     await syncProfileToSupabase({
       id: createdUserId,
       email: regData.email,
@@ -487,31 +436,42 @@ export default function App() {
       avatarUrl: regData.avatarUrl,
       studentIdNumber: createdUserId,
       coordinatorIdNumber: createdUserId,
-    }).catch((err) => console.error('Supabase profile sync failed:', err));
+    });
 
     if (regData.role === 'student') {
       await syncStudentToSupabase({
         id: createdUserId,
-        studentIdNumber: regData.buId,
         buId: regData.buId,
+        studentIdNumber: regData.buId,
         fullName: regData.fullName,
         email: regData.email,
+        degree: regData.department,
         classBlock: regData.classBlock,
-      }).catch((err) => console.error('Supabase student sync failed:', err));
+        companyId: regData.companyId,
+        avatarUrl: regData.avatarUrl,
+        targetHours: 240,
+        renderedHours: 0,
+        enrollmentStatus: 'not_enrolled',
+        status: 'active',
+      });
     }
 
-    setCurrentUser(data.user);
-    if (data.user.role === 'student') {
-      setActiveTab('student-portal');
-    } else {
-      setActiveTab('dashboard');
-    }
+    // Run state machine: confirms rows exist and permanently locks into respective role
+    await syncAndVerifyRole();
     await refreshData();
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem('interntrack_current_user');
+    if (supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (e) {
+        console.warn('Sign out note:', e);
+      }
+    }
     setCurrentUser(null);
+    setAuthState({ status: 'UNAUTHENTICATED' });
     setIsAuthModalOpen(false);
   };
 
@@ -978,69 +938,84 @@ export default function App() {
 
   const pendingAlerts = alerts.filter((a) => a.status === 'pending_review');
 
-  // If user is not authenticated on load, direct them to Startup Splash and then the Sign In / Sign Up page
-  if (!currentUser) {
+  // Rigid Role State Machine Render Gate (Directive 3)
+  // a) While role verification is underway, do not allow main UI or dashboards to render.
+  if (authState.status === 'LOADING') {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-100 font-sans selection:bg-[#F26522] selection:text-white">
+        <div className="text-center space-y-4 max-w-sm px-6">
+          <div className="w-12 h-12 border-3 border-[#F26522] border-t-transparent rounded-full animate-spin mx-auto" />
+          <div className="space-y-1">
+            <h2 className="text-sm font-bold tracking-wider uppercase text-slate-200">
+              Bicol University InternTrack
+            </h2>
+            <p className="text-xs text-slate-400">
+              Verifying role credentials with Supabase...
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // b) If unauthenticated or requires onboarding, render AuthPage cleanly without UI flicker
+  if (authState.status === 'UNAUTHENTICATED' || authState.status === 'ONBOARDING') {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans selection:bg-[#F26522] selection:text-white">
-        {showSplash && <StartupSplash onDismiss={() => setShowSplash(false)} />}
+        {showSplash && authState.status === 'UNAUTHENTICATED' && (
+          <StartupSplash onDismiss={() => setShowSplash(false)} />
+        )}
         <AuthPage
           companies={companies}
           students={students}
           onLogin={handleLogin}
           onRegister={handleRegister}
+          initialMode={authState.status === 'ONBOARDING' ? 'google-onboarding' : 'login'}
+          onboardingUser={
+            authState.status === 'ONBOARDING' && authState.authUser
+              ? {
+                  email: authState.authUser.email || '',
+                  fullName:
+                    authState.authUser.user_metadata?.full_name ||
+                    authState.authUser.email?.split('@')[0] ||
+                    '',
+                  avatarUrl: authState.authUser.user_metadata?.avatar_url || '',
+                }
+              : undefined
+          }
+          errorMessage={authState.status === 'ONBOARDING' ? authState.error : undefined}
         />
       </div>
     );
   }
 
-  // Student corresponding to logged-in user - strictly ensure legal full name reflects
-  const matchedStudent =
-    currentUser.role === 'student'
+  // At this point, authState is strictly 'COORDINATOR' or 'STUDENT'
+  const isCoordinator = authState.status === 'COORDINATOR';
+  const activeUser: User | null = currentUser || authState.user;
+  if (!activeUser) return null;
+
+  // Real student matching - ZERO MOCK DATA
+  const matchedStudent: Student | null =
+    authState.status === 'STUDENT'
       ? students.find(
           (s) =>
-            s.email.toLowerCase() === currentUser.email.toLowerCase() ||
-            (currentUser.buId && s.buId === currentUser.buId)
+            s.email.toLowerCase() === activeUser.email.toLowerCase() ||
+            (activeUser.buId && s.buId === activeUser.buId) ||
+            s.id === activeUser.id
         ) ||
-        currentUser.studentProfile ||
-        students.find((s) => s.id === (currentUser as any).studentId) ||
+        activeUser.studentProfile ||
+        authState.student ||
         null
       : null;
 
-  const loggedInStudent = matchedStudent
+  const loggedInStudent: Student | null = matchedStudent
     ? {
         ...matchedStudent,
-        // Guarantee the student's legal name registered in database always reflects
-        fullName: currentUser.fullName || matchedStudent.fullName,
-      }
-    : currentUser.role === 'student'
-    ? {
-        id: `stu-${currentUser.id || 'curr'}`,
-        buId: currentUser.buId || '2026-0001',
-        fullName: currentUser.fullName,
-        email: currentUser.email,
-        degree: 'BS Computer Science',
-        college: 'College of Science',
-        classBlock: currentUser.classBlock || 'BSCS 4-A',
-        batchId: currentUser.batchId || 'batch-1',
-        enrollmentType: 'individual' as const,
-        companyId: '',
-        companyName: 'Not Yet Enrolled (Pending Application)',
-        mentorName: 'Unassigned',
-        dutyStart: '',
-        dutyEnd: '',
-        dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-        targetHours: 240,
-        renderedHours: 0,
-        attendanceRate: 100,
-        status: 'active' as const,
-        enrollmentStatus: 'not_enrolled' as const,
-        deploymentApproved: false,
-        avatarUrl: currentUser.avatarUrl || '',
+        fullName: activeUser.fullName || matchedStudent.fullName,
       }
     : null;
 
   const isStudentEnrollmentApproved = loggedInStudent?.enrollmentStatus === 'approved';
-  const isCoordinator = currentUser.role === 'coordinator';
 
   const headerNavItems = isCoordinator
     ? [
@@ -1063,7 +1038,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         pendingAlertsCount={pendingAlerts.length}
-        currentUser={currentUser}
+        currentUser={activeUser}
         onOpenAlerts={() => setIsAlertsDropdownOpen((prev) => !prev)}
         onOpenAuth={() => setIsAuthModalOpen(true)}
         onOpenProfileSettings={() => setActiveTab('profile-settings')}
@@ -1206,7 +1181,7 @@ export default function App() {
             )}
 
             {/* Profile Button with Dropdown Menu */}
-            {currentUser && (
+            {activeUser && (
               <div className="relative" id="header-profile-menu-container">
                 <button
                   onClick={(e) => {
@@ -1217,10 +1192,10 @@ export default function App() {
                   title="User Profile Menu"
                   aria-expanded={isProfileDropdownOpen}
                 >
-                  {currentUser.avatarUrl && currentUser.avatarUrl.trim() !== '' ? (
+                  {activeUser.avatarUrl && activeUser.avatarUrl.trim() !== '' ? (
                     <img
-                      src={currentUser.avatarUrl}
-                      alt={currentUser.fullName}
+                      src={activeUser.avatarUrl}
+                      alt={activeUser.fullName}
                       className="w-7 h-7 rounded-lg object-cover ring-1 ring-[#F26522]"
                     />
                   ) : (
@@ -1229,7 +1204,7 @@ export default function App() {
                     </div>
                   )}
                   <span className="hidden md:inline-block text-xs font-bold text-slate-200 max-w-[110px] truncate">
-                    {currentUser.fullName}
+                    {activeUser.fullName}
                   </span>
                 </button>
 
@@ -1237,17 +1212,17 @@ export default function App() {
                 {isProfileDropdownOpen && (
                   <div className="absolute right-0 top-full mt-2 w-64 bg-[#020617] border border-slate-800 rounded-2xl shadow-2xl p-2 z-50 text-xs animate-in fade-in zoom-in-95 duration-150">
                     <div className="p-2.5 bg-slate-900/60 rounded-lg border border-slate-800/80 mb-2">
-                      <div className="font-bold text-slate-100 truncate">{currentUser.fullName}</div>
-                      <div className="text-[10px] text-slate-400 font-mono truncate">{currentUser.buId || currentUser.email}</div>
+                      <div className="font-bold text-slate-100 truncate">{activeUser.fullName}</div>
+                      <div className="text-[10px] text-slate-400 font-mono truncate">{activeUser.buId || activeUser.email}</div>
                       <div className="mt-1.5 flex items-center gap-1.5">
                         <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${
-                          currentUser.role === 'coordinator' ? 'bg-[#F26522] text-white' : 'bg-emerald-600 text-white'
+                          activeUser.role === 'coordinator' ? 'bg-[#F26522] text-white' : 'bg-emerald-600 text-white'
                         }`}>
-                          {currentUser.role === 'coordinator' ? 'Coordinator' : 'Student Intern'}
+                          {activeUser.role === 'coordinator' ? 'Coordinator' : 'Student Intern'}
                         </span>
-                        {currentUser.classBlock && (
+                        {activeUser.classBlock && (
                           <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-white/10 text-slate-300">
-                            {currentUser.classBlock}
+                            {activeUser.classBlock}
                           </span>
                         )}
                       </div>
@@ -1314,19 +1289,19 @@ export default function App() {
                 </p>
               </div>
             </div>
-          ) : activeTab === 'profile-settings' && currentUser ? (
+          ) : activeTab === 'profile-settings' && activeUser ? (
             /* Dedicated Profile Settings Page View */
             <ProfileSettingsView
-              currentUser={currentUser}
+              currentUser={activeUser}
               loggedInStudent={loggedInStudent}
               onUpdateProfile={handleUpdateProfile}
               onCancelEnrollment={handleCancelEnrollment}
               onBack={() => setActiveTab(isCoordinator ? 'dashboard' : 'student-portal')}
             />
-          ) : currentUser.role === 'student' && !isStudentEnrollmentApproved && loggedInStudent ? (
+          ) : activeUser.role === 'student' && !isStudentEnrollmentApproved && loggedInStudent ? (
             /* Student Enrollment Gate: If student account is freshly created or pending coordinator approval, gate them here before accessing dashboard */
             <StudentEnrollmentGate
-              currentUser={currentUser}
+              currentUser={activeUser}
               student={loggedInStudent}
               companies={companies}
               allStudents={students}
@@ -1341,9 +1316,9 @@ export default function App() {
           ) : (
             <>
               {/* Student-Specific Dedicated Portal View (Unlocked once approved) */}
-              {((activeTab === 'student-portal' || (!isCoordinator && activeTab === 'dashboard')) && loggedInStudent && currentUser) && (
+              {((activeTab === 'student-portal' || (!isCoordinator && activeTab === 'dashboard')) && loggedInStudent && activeUser) && (
                 <StudentPortalView
-                  currentUser={currentUser}
+                  currentUser={activeUser}
                   student={loggedInStudent}
                   attendanceLogs={attendanceLogs}
                   accomplishmentReports={accomplishmentReports}
@@ -1354,14 +1329,14 @@ export default function App() {
                   onSubmitExcuse={handleSubmitExcuse}
                   onSubmitReport={handleSubmitReport}
                   onCancelEnrollment={handleCancelEnrollment}
-                  coordinatorName={currentUser?.role === 'coordinator' ? currentUser.fullName : undefined}
+                  coordinatorName={activeUser.role === 'coordinator' ? activeUser.fullName : undefined}
                 />
               )}
 
               {/* Coordinator Dashboard with Unfinished Interns & Archival Endorsement */}
               {activeTab === 'dashboard' && isCoordinator && (
                 <CoordinatorDashboard
-                  currentUser={currentUser}
+                  currentUser={activeUser}
                   stats={stats}
                   groups={groups}
                   students={students}
@@ -1479,7 +1454,7 @@ export default function App() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
-        currentUser={currentUser}
+        currentUser={activeUser}
         companies={companies}
         students={students}
         onLogin={handleLogin}

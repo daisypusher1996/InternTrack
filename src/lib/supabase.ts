@@ -537,6 +537,51 @@ export function logDbDiagnostic(
 }
 
 /**
+ * Strict Role Isolation Check: Prevents an account from registering across both roles.
+ */
+export async function checkRoleIsolation(
+  userIdOrEmail: string,
+  targetRole: 'coordinator' | 'student'
+): Promise<{ allowed: boolean; conflictingRole?: 'coordinator' | 'student'; message?: string }> {
+  if (!isSupabaseConfigured || !supabase) return { allowed: true };
+  const clean = userIdOrEmail.toLowerCase().trim();
+
+  try {
+    if (targetRole === 'coordinator') {
+      const { data: st } = await supabase
+        .from('students')
+        .select('id, email, auth_user_id')
+        .or(`email.eq.${clean},auth_user_id.eq.${clean},id.eq.${clean}`)
+        .limit(1);
+      if (st && st.length > 0) {
+        return {
+          allowed: false,
+          conflictingRole: 'student',
+          message: 'This account is already registered as a Student.',
+        };
+      }
+    } else {
+      const { data: cp } = await supabase
+        .from('coordinators')
+        .select('id, email, auth_user_id')
+        .or(`email.eq.${clean},auth_user_id.eq.${clean},id.eq.${clean}`)
+        .limit(1);
+      if (cp && cp.length > 0) {
+        return {
+          allowed: false,
+          conflictingRole: 'coordinator',
+          message: 'This account is already registered as a Coordinator.',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Role isolation query note:', err);
+  }
+
+  return { allowed: true };
+}
+
+/**
  * Synchronize user profile into Supabase
  */
 export async function syncProfileToSupabase(profile: {
@@ -563,6 +608,16 @@ export async function syncProfileToSupabase(profile: {
       : isValidUuid(profile.coordinatorIdNumber)
       ? profile.coordinatorIdNumber!
       : getDeterministicUuid(cleanEmail);
+
+    // Strict Role Isolation Enforcement
+    const isolation = await checkRoleIsolation(singleProfileId, profile.role);
+    if (!isolation.allowed) {
+      throw new Error(isolation.message);
+    }
+    const emailIsolation = await checkRoleIsolation(cleanEmail, profile.role);
+    if (!emailIsolation.allowed) {
+      throw new Error(emailIsolation.message);
+    }
 
     if (profile.role === 'coordinator') {
       // 1. Sync to coordinators table (user's schema)
@@ -696,6 +751,16 @@ export async function syncStudentToSupabase(student: {
   const avatarToSave = student.avatarUrl && student.avatarUrl.trim() !== '' ? student.avatarUrl.trim() : null;
   const studentIdNum = student.studentIdNumber || student.buId;
   const singleProfileId = isValidUuid(student.id) ? student.id! : getDeterministicUuid(cleanEmail);
+
+  // Strict Role Isolation Enforcement: Check if already registered as a Coordinator
+  const coordCheck = await checkRoleIsolation(singleProfileId, 'student');
+  if (!coordCheck.allowed) {
+    throw new Error(coordCheck.message);
+  }
+  const emailCheck = await checkRoleIsolation(cleanEmail, 'student');
+  if (!emailCheck.allowed) {
+    throw new Error(emailCheck.message);
+  }
 
   // 1. Sync to students table (user's schema) - maintaining single row without duplicate inserts
   try {

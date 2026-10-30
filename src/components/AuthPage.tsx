@@ -53,6 +53,9 @@ interface AuthPageProps {
     dutyEnd?: string;
     avatarUrl?: string;
   }) => Promise<void>;
+  initialMode?: 'login' | 'register' | 'google-onboarding';
+  onboardingUser?: GooglePendingProfile;
+  errorMessage?: string;
 }
 
 interface GooglePendingProfile {
@@ -66,10 +69,45 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   students,
   onLogin,
   onRegister,
+  initialMode,
+  onboardingUser,
+  errorMessage,
 }) => {
   // Navigation / View modes: 'login' | 'register' | 'google-onboarding'
-  const [viewMode, setViewMode] = useState<'login' | 'register' | 'google-onboarding'>('login');
+  const [viewMode, setViewMode] = useState<'login' | 'register' | 'google-onboarding'>(
+    initialMode || (onboardingUser ? 'google-onboarding' : 'login')
+  );
   const [roleMode, setRoleMode] = useState<'coordinator' | 'student'>('coordinator');
+  const [errorMsg, setErrorMsg] = useState<string | null>(errorMessage || null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Google pending profile
+  const [googleUser, setGoogleUser] = useState<GooglePendingProfile | null>(onboardingUser || null);
+
+  useEffect(() => {
+    if (initialMode) {
+      setViewMode(initialMode);
+    }
+  }, [initialMode]);
+
+  useEffect(() => {
+    if (errorMessage) {
+      setErrorMsg(errorMessage);
+    }
+  }, [errorMessage]);
+
+  useEffect(() => {
+    if (onboardingUser) {
+      setGoogleUser(onboardingUser);
+      setViewMode('google-onboarding');
+      if (onboardingUser.email.endsWith('@bicol-u.edu.ph')) {
+        setGoogleRoleMode('student');
+        setRegEmail(onboardingUser.email);
+        setRegFullName(onboardingUser.fullName);
+      }
+    }
+  }, [onboardingUser]);
   
   // Login form
   const [email, setEmail] = useState('');
@@ -105,7 +143,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [pendingRegistrationPayload, setPendingRegistrationPayload] = useState<any | null>(null);
 
   // Google OAuth Onboarding state (for first-time Google sign-in missing institutional details)
-  const [googleUser, setGoogleUser] = useState<GooglePendingProfile | null>(null);
   const [googleBuId, setGoogleBuId] = useState('');
   const [googleDepartment, setGoogleDepartment] = useState('Department of Computer Science');
   const [googleCourse, setGoogleCourse] = useState('');
@@ -113,11 +150,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
   const [googleCustomBlock, setGoogleCustomBlock] = useState(false);
   const [googleCustomBlockInput, setGoogleCustomBlockInput] = useState('');
   const [googleRoleMode, setGoogleRoleMode] = useState<'coordinator' | 'student'>('student');
-
-  // UI state
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Check Supabase session on mount and listen to OAuth session changes / popups
   useEffect(() => {

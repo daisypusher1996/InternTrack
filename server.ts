@@ -122,63 +122,14 @@ function getDeterministicUuid(email: string): string {
 function findStudentRecord(idOrEmailOrBuId: string): any {
   if (!idOrEmailOrBuId) return null;
   const q = String(idOrEmailOrBuId).toLowerCase().trim();
-  let student = students.find((s) => s.id === q || s.email.toLowerCase() === q || s.buId === q || (s.studentIdNumber && s.studentIdNumber.toLowerCase() === q));
-  if (!student) {
-    const user = users.find((u) => u.id === q || u.email.toLowerCase() === q || u.buId === q);
-    if (user) {
-      student = students.find((s) => s.email.toLowerCase() === user.email.toLowerCase() || s.buId === user.buId);
-      if (!student) {
-        student = {
-          id: user.id || getDeterministicUuid(user.email),
-          buId: user.buId || '2023-' + Math.floor(1000 + Math.random() * 9000),
-          fullName: user.fullName || 'Student',
-          email: user.email,
-          degree: 'BS Computer Science',
-          college: 'College of Science',
-          classBlock: user.classBlock || 'BSCS 4-A',
-          companyId: 'comp-1',
-          companyName: 'Bicol University ICT Center',
-          mentorName: 'Engr. J. Santos',
-          dutyStart: '08:00',
-          dutyEnd: '17:00',
-          dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-          targetHours: 240,
-          renderedHours: 0,
-          attendanceRate: 100,
-          status: 'active',
-          enrollmentStatus: 'not_enrolled',
-          deploymentApproved: false,
-          avatarUrl: user.avatarUrl || '',
-        };
-        students.push(student);
-      }
-    } else {
-      student = {
-        id: idOrEmailOrBuId,
-        buId: '2023-' + Math.floor(1000 + Math.random() * 9000),
-        fullName: 'Student Intern',
-        email: idOrEmailOrBuId.includes('@') ? idOrEmailOrBuId : 'student@bicol-u.edu.ph',
-        degree: 'BS Computer Science',
-        college: 'College of Science',
-        classBlock: 'BSCS 4-A',
-        companyId: 'comp-1',
-        companyName: 'Bicol University ICT Center',
-        mentorName: 'Engr. J. Santos',
-        dutyStart: '08:00',
-        dutyEnd: '17:00',
-        dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-        targetHours: 240,
-        renderedHours: 0,
-        attendanceRate: 100,
-        status: 'active',
-        enrollmentStatus: 'not_enrolled',
-        deploymentApproved: false,
-        avatarUrl: '',
-      };
-      students.push(student);
-    }
-  }
-  return student;
+  const student = students.find(
+    (s) =>
+      s.id === q ||
+      s.email.toLowerCase() === q ||
+      s.buId === q ||
+      (s.studentIdNumber && s.studentIdNumber.toLowerCase() === q)
+  );
+  return student || null;
 }
 
 function toIsoDate(dateStr?: string | null): string {
@@ -1331,6 +1282,30 @@ app.use((req, res, next) => {
       }
     }
 
+    // Strict Role Isolation Enforcement
+    if (supabase) {
+      const targetRole = regData?.role || 'student';
+      if (targetRole === 'coordinator') {
+        const { data: stExists } = await supabase
+          .from('students')
+          .select('id')
+          .eq('email', cleanEmail)
+          .limit(1);
+        if (stExists && stExists.length > 0) {
+          return res.status(403).json({ error: 'This account is already registered as a Student.' });
+        }
+      } else if (targetRole === 'student') {
+        const { data: cpExists } = await supabase
+          .from('coordinators')
+          .select('id')
+          .eq('email', cleanEmail)
+          .limit(1);
+        if (cpExists && cpExists.length > 0) {
+          return res.status(403).json({ error: 'This account is already registered as a Coordinator.' });
+        }
+      }
+    }
+
     let user = users.find((u) => u.email.toLowerCase() === cleanEmail);
     let linkedStudent: Student | undefined;
 
@@ -1550,6 +1525,30 @@ app.use((req, res, next) => {
       });
     }
 
+    // Strict Role Isolation Enforcement
+    if (supabase) {
+      const targetRole = role || 'student';
+      if (targetRole === 'coordinator') {
+        const { data: stExists } = await supabase
+          .from('students')
+          .select('id')
+          .eq('email', cleanEmail)
+          .limit(1);
+        if (stExists && stExists.length > 0) {
+          return res.status(403).json({ error: 'This account is already registered as a Student.' });
+        }
+      } else if (targetRole === 'student') {
+        const { data: cpExists } = await supabase
+          .from('coordinators')
+          .select('id')
+          .eq('email', cleanEmail)
+          .limit(1);
+        if (cpExists && cpExists.length > 0) {
+          return res.status(403).json({ error: 'This account is already registered as a Coordinator.' });
+        }
+      }
+    }
+
     let user = users.find((u) => u.email.toLowerCase() === cleanEmail);
 
     // Auto-resolve user from Supabase coordinators or students / auth.users if registered
@@ -1687,30 +1686,8 @@ app.use((req, res, next) => {
       }
     }
 
-    // Auto-provision user if they signed in via Google with a valid institutional account
-    if (!user && isBuEmail) {
-      const singleProfileId = getDeterministicUuid(cleanEmail);
-      const assumedStudentId = extractStudentIdFromEmail(cleanEmail);
-      const resolvedName = fullName?.trim() || cleanEmail.split('@')[0].toUpperCase();
-      const detectedRole = role === 'coordinator' ? 'coordinator' : 'student';
-
-      const newUser: User = {
-        id: singleProfileId,
-        email: cleanEmail,
-        fullName: resolvedName,
-        role: detectedRole,
-        buId: assumedStudentId,
-        department: 'College of Science',
-        classBlock: '',
-        batchId: 'batch-1',
-        avatarUrl: avatarUrl || '',
-      };
-      users.push(newUser);
-      user = newUser;
-    }
-
     if (!user) {
-      return res.status(401).json({ error: 'Invalid institutional email or credentials' });
+      return res.status(404).json({ error: 'User record not found in database. Please register to create your account.' });
     }
 
     // Always ensure the full legal name passed from login/registration reflects on user profile
@@ -1818,29 +1795,32 @@ app.use((req, res, next) => {
 
     if (supabase) {
       try {
-        if (targetRole === 'student') {
-          const { data: coordMatch } = await supabase
-            .from('coordinators')
-            .select('email')
-            .eq('email', cleanEmail)
-            .maybeSingle();
-          if (coordMatch) {
-            return res.status(400).json({
-              error: 'Role conflict: This email is already registered as a Coordinator in the database. A single user cannot hold both student and coordinator roles.',
+        if (targetRole === 'coordinator') {
+          const { data: studentMatch } = await supabase
+            .from('students')
+            .select('id, email, auth_user_id')
+            .or(`email.eq.${cleanEmail}`)
+            .limit(1);
+          if (studentMatch && studentMatch.length > 0) {
+            return res.status(409).json({
+              error: 'This account is already registered as a Student.',
             });
           }
         } else {
-          if (supabaseAdmin) {
-            const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
-            const sbUser = usersData?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
-            if (sbUser && sbUser.user_metadata?.role === 'student') {
-              return res.status(400).json({
-                error: 'Role conflict: This email is already registered as a Student in the database. A single user cannot hold both student and coordinator roles.',
-              });
-            }
+          const { data: coordMatch } = await supabase
+            .from('coordinators')
+            .select('id, email, auth_user_id')
+            .or(`email.eq.${cleanEmail}`)
+            .limit(1);
+          if (coordMatch && coordMatch.length > 0) {
+            return res.status(409).json({
+              error: 'This account is already registered as a Coordinator.',
+            });
           }
         }
-      } catch {}
+      } catch (err) {
+        console.warn('Register isolation check note:', err);
+      }
     }
 
     // Strictly reject student accounts if course/block was not chosen (never assume BSCS 4-A)
