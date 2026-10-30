@@ -153,6 +153,31 @@ export default function App() {
             (currentUser.studentIdNumber && s.studentIdNumber === currentUser.studentIdNumber)
         );
         if (freshStudent) {
+          if (!freshStudent.pendingGroupInvitation && Array.isArray(groupsRes)) {
+            for (const g of groupsRes) {
+              const inv = g.invitations?.find(
+                (i: any) =>
+                  i.status === 'pending' &&
+                  (i.studentEmail.toLowerCase() === freshStudent.email.toLowerCase() || i.studentId === freshStudent.id)
+              );
+              if (inv) {
+                freshStudent.pendingGroupInvitation = {
+                  groupId: g.id,
+                  groupName: g.name,
+                  companyId: g.companyId,
+                  companyName: g.companyName,
+                  companyBranch: g.companyBranch || '',
+                  leaderName: g.leaderName,
+                  leaderEmail: g.invitations?.find((i: any) => i.status === 'creator')?.studentEmail || '',
+                  scheduledDeploymentDate: g.scheduledDeploymentDate,
+                  coordinatorName: g.coordinatorName,
+                  mentorName: g.mentorName,
+                  invitedAt: inv.respondedAt || new Date().toISOString(),
+                };
+                break;
+              }
+            }
+          }
           setCurrentUser((prev) => (prev ? { ...prev, studentProfile: freshStudent } : prev));
         }
       }
@@ -601,6 +626,11 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to submit enrollment application');
+
+    // Merge group into state if created
+    if (data.group) {
+      setGroups((prev) => [data.group, ...prev.filter((g) => g.id !== data.group.id)]);
+    }
 
     // Direct browser Supabase sync
     await syncStudentToSupabase({
@@ -1113,19 +1143,17 @@ export default function App() {
           {/* Center: Navigation Modules (displayed between in header on web version full screen) */}
           <nav className="hidden xl:flex items-center gap-1.5 flex-1 justify-center max-w-3xl overflow-x-auto py-1">
             {headerNavItems.map((item) => {
-              const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 flex items-center gap-1.5 active:scale-95 cursor-pointer shrink-0 ${
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 flex items-center active:scale-95 cursor-pointer shrink-0 ${
                     isActive
                       ? 'bg-[#F26522] text-white shadow-sm'
                       : 'text-slate-300 hover:text-white hover:bg-white/10'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                   <span>{item.label}</span>
                 </button>
               );

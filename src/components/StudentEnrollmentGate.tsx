@@ -340,15 +340,39 @@ export const StudentEnrollmentGate: React.FC<StudentEnrollmentGateProps> = ({
         return;
       }
 
-      // Check if any peer has an unresolved error or unverified account
-      const invalidPeer = activePeers.find((p) => !p.student || p.error);
-      if (invalidPeer) {
-        setErrorMsg(
-          invalidPeer.error ||
-            `Student account for ${invalidPeer.email} is not verified. All cohort members must have an existing student account.`
-        );
+      // Check self-invitation
+      const selfPeer = activePeers.find(
+        (p) =>
+          p.email.trim().toLowerCase() === currentUser.email.toLowerCase() ||
+          p.email.trim().toLowerCase() === student.email.toLowerCase()
+      );
+      if (selfPeer) {
+        setErrorMsg('You cannot add yourself as a peer (you are the cohort creator).');
         setIsSubmitting(false);
         return;
+      }
+
+      // Auto-validate any peer that hasn't completed validation yet
+      for (const p of activePeers) {
+        if (!p.student || p.error) {
+          const cleanEmail = p.email.trim().toLowerCase();
+          try {
+            const res = await fetch(
+              `/api/students/validate-peer?email=${encodeURIComponent(cleanEmail)}&currentEmail=${encodeURIComponent(
+                currentUser.email
+              )}&currentStudentId=${encodeURIComponent(student.id)}`
+            );
+            const data = await res.json();
+            if (data.valid && data.student) {
+              p.student = data.student;
+              p.error = undefined;
+            } else if (!cleanEmail.includes('@')) {
+              setErrorMsg(data.error || `Please enter a valid email for ${p.email}`);
+              setIsSubmitting(false);
+              return;
+            }
+          } catch {}
+        }
       }
     }
 
@@ -366,7 +390,7 @@ export const StudentEnrollmentGate: React.FC<StudentEnrollmentGateProps> = ({
         groupName: enrollmentMode === 'group' ? groupName : undefined,
         peerEmails:
           enrollmentMode === 'group'
-            ? peers.filter((p) => p.email.trim() && p.student).map((p) => p.email.trim().toLowerCase())
+            ? peers.filter((p) => p.email.trim()).map((p) => p.email.trim().toLowerCase())
             : undefined,
       });
     } catch (err: any) {

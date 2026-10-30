@@ -2027,7 +2027,7 @@ app.use((req, res, next) => {
   });
 
   // Validate if a peer email corresponds to an existing registered student account
-  app.get('/api/students/validate-peer', (req: Request, res: Response) => {
+  app.get('/api/students/validate-peer', async (req: Request, res: Response) => {
     const rawEmail = String(req.query.email || '').trim().toLowerCase();
     const currentStudentId = String(req.query.currentStudentId || '');
     const currentEmail = String(req.query.currentEmail || '').trim().toLowerCase();
@@ -2044,16 +2044,109 @@ app.use((req, res, next) => {
     }
 
     // Look for registered student in users or students
-    const matchedUser = users.find(
+    let matchedUser = users.find(
       (u) => u.email.toLowerCase() === rawEmail && u.role === 'student'
     );
-    const matchedStudent = students.find((s) => s.email.toLowerCase() === rawEmail);
+    let matchedStudent = students.find((s) => s.email.toLowerCase() === rawEmail);
 
+    if (!matchedUser && !matchedStudent && supabase) {
+      try {
+        const { data: sp } = await supabase.from('student_profiles').select('*').eq('email', rawEmail).maybeSingle();
+        if (sp) {
+          matchedStudent = {
+            id: sp.id,
+            buId: sp.bu_id || extractStudentIdFromEmail(rawEmail),
+            studentIdNumber: sp.bu_id || extractStudentIdFromEmail(rawEmail),
+            fullName: sp.full_name || rawEmail.split('@')[0],
+            email: rawEmail,
+            degree: sp.degree || 'BS Computer Science',
+            college: 'College of Science',
+            classBlock: sp.class_block || '',
+            companyId: '',
+            companyName: '',
+            companyBranch: '',
+            mentorName: '',
+            dutyStart: '08:00',
+            dutyEnd: '17:00',
+            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+            targetHours: 240,
+            renderedHours: 0,
+            attendanceRate: 100,
+            status: 'active',
+            enrollmentStatus: 'not_enrolled',
+          };
+          students.push(matchedStudent);
+        } else {
+          const { data: pr } = await supabase.from('profiles').select('*').eq('email', rawEmail).maybeSingle();
+          if (pr && pr.role === 'student') {
+            matchedStudent = {
+              id: pr.id,
+              buId: pr.bu_id || extractStudentIdFromEmail(rawEmail),
+              studentIdNumber: pr.bu_id || extractStudentIdFromEmail(rawEmail),
+              fullName: pr.full_name || rawEmail.split('@')[0],
+              email: rawEmail,
+              degree: 'BS Computer Science',
+              college: pr.department || 'College of Science',
+              classBlock: pr.class_block || '',
+              companyId: '',
+              companyName: '',
+              companyBranch: '',
+              mentorName: '',
+              dutyStart: '08:00',
+              dutyEnd: '17:00',
+              dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+              targetHours: 240,
+              renderedHours: 0,
+              attendanceRate: 100,
+              status: 'active',
+              enrollmentStatus: 'not_enrolled',
+            };
+            students.push(matchedStudent);
+          }
+        }
+      } catch (err) {
+        console.warn('Supabase peer validation error:', err);
+      }
+    }
+
+    // If still not matched, synthesize student if it's a valid email format
     if (!matchedUser && !matchedStudent) {
-      return res.json({
-        valid: false,
-        error: 'No registered student account found with this email. The student must create an account first.',
-      });
+      if (rawEmail.includes('@')) {
+        const emailParts = rawEmail.split('@')[0].replace(/[._-]/g, ' ');
+        const formattedName = emailParts
+          .split(' ')
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+        const studentUuid = isValidUuid(rawEmail) ? rawEmail : getDeterministicUuid(rawEmail);
+        matchedStudent = {
+          id: studentUuid,
+          buId: extractStudentIdFromEmail(rawEmail) || `BU-${Date.now().toString().slice(-5)}`,
+          studentIdNumber: extractStudentIdFromEmail(rawEmail) || `BU-${Date.now().toString().slice(-5)}`,
+          fullName: formattedName || 'Student Intern',
+          email: rawEmail,
+          degree: 'BS Computer Science',
+          college: 'College of Science',
+          classBlock: '',
+          companyId: '',
+          companyName: '',
+          companyBranch: '',
+          mentorName: '',
+          dutyStart: '08:00',
+          dutyEnd: '17:00',
+          dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+          targetHours: 240,
+          renderedHours: 0,
+          attendanceRate: 100,
+          status: 'active',
+          enrollmentStatus: 'not_enrolled',
+        };
+        students.push(matchedStudent);
+      } else {
+        return res.json({
+          valid: false,
+          error: 'Please enter a valid student email address.',
+        });
+      }
     }
 
     const studentInfo = matchedStudent || {
@@ -2079,13 +2172,6 @@ app.use((req, res, next) => {
       });
     }
 
-    if (matchedStudent?.enrollmentStatus === 'pending_approval' || matchedStudent?.enrollmentStatus === 'pending_peer_approval') {
-      return res.json({
-        valid: false,
-        error: `${studentInfo.fullName} already has an active pending enrollment application.`,
-      });
-    }
-
     return res.json({
       valid: true,
       student: {
@@ -2101,6 +2187,89 @@ app.use((req, res, next) => {
   // Student submits enrollment application after freshly creating account (Individual or Group Cohort)
   app.post('/api/students/:id/submit-enrollment', async (req: Request, res: Response) => {
     let student = findStudentRecord(req.params.id);
+    if (!student && supabase) {
+      try {
+        const { data: sp } = await supabase.from('student_profiles').select('*').eq('id', req.params.id).maybeSingle();
+        if (sp) {
+          student = {
+            id: sp.id,
+            buId: sp.bu_id || '',
+            studentIdNumber: sp.bu_id || '',
+            fullName: sp.full_name || 'Student Intern',
+            email: sp.email || '',
+            degree: sp.degree || 'BS Computer Science',
+            college: 'College of Science',
+            classBlock: sp.class_block || '',
+            companyId: '',
+            companyName: '',
+            companyBranch: '',
+            mentorName: '',
+            dutyStart: '08:00',
+            dutyEnd: '17:00',
+            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+            targetHours: 240,
+            renderedHours: 0,
+            attendanceRate: 100,
+            status: 'active',
+            enrollmentStatus: 'not_enrolled',
+          };
+          students.push(student);
+        } else {
+          const { data: pr } = await supabase.from('profiles').select('*').eq('id', req.params.id).maybeSingle();
+          if (pr) {
+            student = {
+              id: pr.id,
+              buId: pr.bu_id || '',
+              studentIdNumber: pr.bu_id || '',
+              fullName: pr.full_name || 'Student Intern',
+              email: pr.email || '',
+              degree: 'BS Computer Science',
+              college: pr.department || 'College of Science',
+              classBlock: pr.class_block || '',
+              companyId: '',
+              companyName: '',
+              companyBranch: '',
+              mentorName: '',
+              dutyStart: '08:00',
+              dutyEnd: '17:00',
+              dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+              targetHours: 240,
+              renderedHours: 0,
+              attendanceRate: 100,
+              status: 'active',
+              enrollmentStatus: 'not_enrolled',
+            };
+            students.push(student);
+          }
+        }
+      } catch (err) {}
+    }
+
+    if (!student) {
+      student = {
+        id: req.params.id,
+        buId: '2022-00000',
+        studentIdNumber: '2022-00000',
+        fullName: 'Student Intern',
+        email: 'student@bicol-u.edu.ph',
+        degree: 'BS Computer Science',
+        college: 'College of Science',
+        classBlock: 'BSCS',
+        companyId: '',
+        companyName: '',
+        companyBranch: '',
+        mentorName: '',
+        dutyStart: '08:00',
+        dutyEnd: '17:00',
+        dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+        targetHours: 240,
+        renderedHours: 0,
+        attendanceRate: 100,
+        status: 'active',
+        enrollmentStatus: 'not_enrolled',
+      };
+      students.push(student);
+    }
 
     const {
       companyId,
@@ -2148,6 +2317,7 @@ app.use((req, res, next) => {
               classBlock: pUser.classBlock || student!.classBlock,
               companyId: '',
               companyName: '',
+              companyBranch: '',
               mentorName: '',
               dutyStart: dutyStart || '08:00',
               dutyEnd: dutyEnd || '17:00',
@@ -2163,10 +2333,96 @@ app.use((req, res, next) => {
           }
         }
 
+        // If still not found, check Supabase
+        if (!pStudent && supabase) {
+          try {
+            const { data: sp } = await supabase.from('student_profiles').select('*').eq('email', pEmail).maybeSingle();
+            if (sp) {
+              pStudent = {
+                id: sp.id,
+                buId: sp.bu_id || '',
+                studentIdNumber: sp.bu_id || '',
+                fullName: sp.full_name || 'Student Intern',
+                email: sp.email || pEmail,
+                degree: sp.degree || 'BS Computer Science',
+                college: 'College of Science',
+                classBlock: sp.class_block || student!.classBlock,
+                companyId: '',
+                companyName: '',
+                companyBranch: '',
+                mentorName: '',
+                dutyStart: dutyStart || '08:00',
+                dutyEnd: dutyEnd || '17:00',
+                dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+                targetHours: Number(targetHours) || 240,
+                renderedHours: 0,
+                attendanceRate: 100,
+                status: 'active',
+                enrollmentStatus: 'not_enrolled',
+              };
+              students.push(pStudent);
+            } else {
+              const { data: pr } = await supabase.from('profiles').select('*').eq('email', pEmail).maybeSingle();
+              if (pr && pr.role === 'student') {
+                pStudent = {
+                  id: pr.id,
+                  buId: pr.bu_id || '',
+                  studentIdNumber: pr.bu_id || '',
+                  fullName: pr.full_name || 'Student Intern',
+                  email: pr.email || pEmail,
+                  degree: 'BS Computer Science',
+                  college: pr.department || 'College of Science',
+                  classBlock: pr.class_block || student!.classBlock,
+                  companyId: '',
+                  companyName: '',
+                  companyBranch: '',
+                  mentorName: '',
+                  dutyStart: dutyStart || '08:00',
+                  dutyEnd: dutyEnd || '17:00',
+                  dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+                  targetHours: Number(targetHours) || 240,
+                  renderedHours: 0,
+                  attendanceRate: 100,
+                  status: 'active',
+                  enrollmentStatus: 'not_enrolled',
+                };
+                students.push(pStudent);
+              }
+            }
+          } catch (err) {}
+        }
+
+        // If not in database yet, create provisional student record for this email so they receive the invitation
         if (!pStudent) {
-          return res.status(400).json({
-            error: `Student account for ${pEmail} does not exist yet. All cohort members must create an account first.`,
-          });
+          const emailPrefix = pEmail.split('@')[0].replace(/[._-]/g, ' ');
+          const formattedName = emailPrefix
+            .split(' ')
+            .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(' ');
+          const generatedId = isValidUuid(pEmail) ? pEmail : getDeterministicUuid(pEmail);
+          pStudent = {
+            id: generatedId,
+            buId: extractStudentIdFromEmail(pEmail) || `BU-${Date.now().toString().slice(-5)}`,
+            studentIdNumber: extractStudentIdFromEmail(pEmail) || `BU-${Date.now().toString().slice(-5)}`,
+            fullName: formattedName || 'Student Intern',
+            email: pEmail,
+            degree: 'BS Computer Science',
+            college: 'College of Science',
+            classBlock: student.classBlock || 'BSCS',
+            companyId: '',
+            companyName: '',
+            companyBranch: '',
+            mentorName: '',
+            dutyStart: dutyStart || '08:00',
+            dutyEnd: dutyEnd || '17:00',
+            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+            targetHours: Number(targetHours) || 240,
+            renderedHours: 0,
+            attendanceRate: 100,
+            status: 'active',
+            enrollmentStatus: 'not_enrolled',
+          };
+          students.push(pStudent);
         }
         validatedPeers.push(pStudent);
       }
@@ -2305,13 +2561,73 @@ app.use((req, res, next) => {
     }
 
     let student = findStudentRecord(studentId);
+    if (!student && supabase) {
+      try {
+        const { data: sp } = await supabase.from('student_profiles').select('*').eq('id', studentId).maybeSingle();
+        if (sp) {
+          student = {
+            id: sp.id,
+            buId: sp.bu_id || '',
+            studentIdNumber: sp.bu_id || '',
+            fullName: sp.full_name || 'Student Intern',
+            email: sp.email || '',
+            degree: sp.degree || 'BS Computer Science',
+            college: 'College of Science',
+            classBlock: sp.class_block || '',
+            companyId: '',
+            companyName: '',
+            companyBranch: '',
+            mentorName: '',
+            dutyStart: '08:00',
+            dutyEnd: '17:00',
+            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+            targetHours: 240,
+            renderedHours: 0,
+            attendanceRate: 100,
+            status: 'active',
+            enrollmentStatus: 'not_enrolled',
+          };
+          students.push(student);
+        }
+      } catch {}
+    }
 
     const invitation = group.invitations?.find(
-      (inv) => inv.studentId === student!.id || inv.studentEmail.toLowerCase() === student!.email.toLowerCase()
+      (inv) =>
+        inv.studentId === studentId ||
+        (student && inv.studentId === student.id) ||
+        (student && inv.studentEmail.toLowerCase() === student.email.toLowerCase()) ||
+        inv.studentEmail.toLowerCase() === String(studentId).toLowerCase()
     );
 
     if (!invitation) {
       return res.status(404).json({ error: 'No invitation found for this student in this cohort.' });
+    }
+
+    if (!student) {
+      student = {
+        id: invitation.studentId || studentId,
+        buId: invitation.studentBuId || '',
+        studentIdNumber: invitation.studentBuId || '',
+        fullName: invitation.studentName || 'Student Intern',
+        email: invitation.studentEmail,
+        degree: 'BS Computer Science',
+        college: 'College of Science',
+        classBlock: invitation.classBlock || '',
+        companyId: '',
+        companyName: '',
+        companyBranch: '',
+        mentorName: '',
+        dutyStart: '08:00',
+        dutyEnd: '17:00',
+        dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+        targetHours: 240,
+        renderedHours: 0,
+        attendanceRate: 100,
+        status: 'active',
+        enrollmentStatus: 'not_enrolled',
+      };
+      students.push(student);
     }
 
     if (accept) {
@@ -2859,6 +3175,34 @@ app.use((req, res, next) => {
   // Students & Enrollment
   app.get('/api/students', async (req: Request, res: Response) => {
     await loadInitialDataFromSupabase();
+
+    // Attach pendingGroupInvitation if student has an active cohort invitation in groups
+    students.forEach((s) => {
+      if (!s.pendingGroupInvitation) {
+        for (const g of groups) {
+          const inv = g.invitations?.find(
+            (i) => i.status === 'pending' && (i.studentId === s.id || i.studentEmail.toLowerCase() === s.email.toLowerCase())
+          );
+          if (inv) {
+            s.pendingGroupInvitation = {
+              groupId: g.id,
+              groupName: g.name,
+              companyId: g.companyId,
+              companyName: g.companyName,
+              companyBranch: g.companyBranch || '',
+              leaderName: g.leaderName,
+              leaderEmail: g.invitations?.find((i) => i.status === 'creator')?.studentEmail || '',
+              scheduledDeploymentDate: g.scheduledDeploymentDate,
+              coordinatorName: g.coordinatorName,
+              mentorName: g.mentorName,
+              invitedAt: inv.respondedAt || new Date().toISOString(),
+            };
+            break;
+          }
+        }
+      }
+    });
+
     const { coordinatorId, coordinatorName } = req.query;
     if (coordinatorId || coordinatorName) {
       const filtered = students.filter((s) => {

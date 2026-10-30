@@ -422,13 +422,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({
 
         {/* Top Header Badge */}
         <div className="relative z-10 space-y-4">
-          <div className="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/15 text-xs font-semibold tracking-wide text-slate-200">
-            <span className="w-2 h-2 rounded-full bg-[#F26522] animate-pulse" />
-            <span className="uppercase text-[11px] font-bold tracking-wider text-orange-200">
-              Bicol University Practicum System
-            </span>
-          </div>
-
           <div className="flex items-center gap-3">
             <span className="text-3xl xl:text-4xl font-black tracking-tight font-sans">
               <span className="text-[#3b82f6]">I</span>
@@ -438,7 +431,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           </div>
         </div>
 
-        {/* Middle: Value Proposition & Feature Showcase */}
+        {/* Middle: Value Proposition */}
         <div className="relative z-10 my-auto py-8 space-y-8 max-w-xl">
           <div className="space-y-3">
             <h2 className="text-3xl xl:text-4xl font-extrabold tracking-tight text-white leading-tight">
@@ -448,60 +441,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               An institutional platform designed for Bicol University students, faculty coordinators, and accredited Host Training Establishments (HTEs) for verified DTR monitoring and practicum governance.
             </p>
           </div>
-
-          {/* Feature Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs space-y-1.5 hover:border-[#F26522]/40 transition-colors">
-              <div className="flex items-center gap-2 font-bold text-sm text-white">
-                <Clock className="w-4 h-4 text-[#F26522]" />
-                <span>Automated DTR Logging</span>
-              </div>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Real-time time-in and time-out logging with shift tracking and anomaly verification.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs space-y-1.5 hover:border-[#F26522]/40 transition-colors">
-              <div className="flex items-center gap-2 font-bold text-sm text-white">
-                <FileText className="w-4 h-4 text-blue-400" />
-                <span>Accomplishment Reports</span>
-              </div>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Structured weekly accomplishment logging and mentor sign-off endorsements.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs space-y-1.5 hover:border-[#F26522]/40 transition-colors">
-              <div className="flex items-center gap-2 font-bold text-sm text-white">
-                <Shield className="w-4 h-4 text-emerald-400" />
-                <span>Strict Role Isolation</span>
-              </div>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Strict separation between Student Interns and Practicum Coordinators.
-              </p>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs space-y-1.5 hover:border-[#F26522]/40 transition-colors">
-              <div className="flex items-center gap-2 font-bold text-sm text-white">
-                <Building2 className="w-4 h-4 text-amber-400" />
-                <span>Accredited HTE Directory</span>
-              </div>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Centralized registry of verified corporate partners and host training institutions.
-              </p>
-            </div>
-          </div>
         </div>
 
-        {/* Bottom Institutional Seal & Motto */}
-        <div className="relative z-10 pt-6 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-400">
-          <div>
-            <p className="font-semibold text-slate-200">Bicol University • A University for Humanity</p>
-            <p className="text-[11px] text-slate-400">Character • Scholarship • Service</p>
-          </div>
-          <div className="text-[11px] text-slate-400 text-left sm:text-right">
-            Practicum Directorate &bull; College of Science
-          </div>
+        {/* Bottom Institutional Seal & Researchers Attribution */}
+        <div className="relative z-10 pt-6 border-t border-white/10 text-xs text-slate-400">
+          <p>
+            <strong className="text-slate-300">Researchers:</strong> Humpry Andrei L. Camacho &bull; Joshua A. Ecat &bull; Jhercy N. Narito (BSCS)
+          </p>
         </div>
       </div>
 
@@ -518,11 +464,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
               <span className="text-[#F26522]">Track</span>
             </span>
           </div>
-          <div className="hidden lg:block">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Institutional Access
-            </span>
-          </div>
+          <div className="hidden lg:block" />
 
           <ThemeToggle showLabel={false} />
         </div>
@@ -1252,12 +1194,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           )}
         </div>
 
-        {/* Footer Credit in the Right Column */}
-        <div className="pt-8 text-center text-[11px] text-slate-400 dark:text-slate-500">
+        {/* Footer Credit on Mobile (on desktop, researchers are placed on bottom-left) */}
+        <div className="pt-8 text-center text-[11px] text-slate-400 dark:text-slate-500 lg:hidden">
           <p>
             <strong>Researchers:</strong> Humpry Andrei L. Camacho &bull; Joshua A. Ecat &bull; Jhercy N. Narito (BSCS)
           </p>
-          <p className="mt-0.5">Bicol University College of Science &bull; Practicum Monitoring System</p>
         </div>
       </div>
 
