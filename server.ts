@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -443,6 +444,30 @@ function extractStudentIdFromEmail(email: string): string {
   return stripped || localPart;
 }
 
+function resolveDegreeInfo(block?: string) {
+  if (!block) return { degree: 'BS Computer Science', department: 'Department of Computer Science', college: 'College of Science' };
+  const b = block.toUpperCase();
+  if (b.includes('BSIT') || b.includes('INFORMATION TECH')) {
+    return { degree: 'BS Information Technology', department: 'Department of Information Technology', college: 'College of Science' };
+  }
+  if (b.includes('BSIS') || b.includes('INFORMATION SYS')) {
+    return { degree: 'BS Information Systems', department: 'Department of Information Systems', college: 'College of Science' };
+  }
+  if (b.includes('BIO')) {
+    return { degree: 'BS Biology', department: 'Department of Biology', college: 'College of Science' };
+  }
+  if (b.includes('CHEM')) {
+    return { degree: 'BS Chemistry', department: 'Department of Chemistry', college: 'College of Science' };
+  }
+  if (b.includes('MET')) {
+    return { degree: 'BS Meteorology', department: 'Department of Meteorology', college: 'College of Science' };
+  }
+  if (b.includes('BSCS') || b.includes('COMPUTER SCI')) {
+    return { degree: 'BS Computer Science', department: 'Department of Computer Science', college: 'College of Science' };
+  }
+  return { degree: block, department: 'College of Science', college: 'College of Science' };
+}
+
 // Server-side Supabase Sync Helpers with Distinct ID Naming & Relational Connections
 async function syncProfileServer(user: User) {
   if (!supabase) return;
@@ -454,29 +479,10 @@ async function syncProfileServer(user: User) {
 
   try {
     if (user.role === 'coordinator') {
-      const coordIdNum = user.coordinatorIdNumber || user.buId;
-      let cpPayload: any = {
-        ...(authUserId ? { id: authUserId } : {}),
-        user_id: authUserId,
-        coordinator_id_number: coordIdNum,
-        bu_id: user.buId,
-        full_name: user.fullName,
-        email: cleanEmail,
-        role: 'coordinator',
-        department: user.department || 'Department of Computer Science',
-        avatar_url: avatarToSave,
-        updated_at: new Date().toISOString(),
-      };
-      let { error: cpErr } = await supabase.from('coordinator_profiles').upsert(cpPayload, { onConflict: 'email' });
-      if (cpErr && (cpErr.code === '23503' || String(cpErr.message || '').includes('foreign key constraint'))) {
-        delete cpPayload.user_id;
-        await supabase.from('coordinator_profiles').upsert(cpPayload, { onConflict: 'email' });
-      }
-
-      // Sync to coordinators table
+      // 1. Primary: sync to coordinators table in Supabase
       try {
         let coordPayload: any = {
-          ...(authUserId ? { id: authUserId } : {}),
+          id: authUserId,
           auth_user_id: authUserId,
           full_name: user.fullName,
           email: cleanEmail,
@@ -487,42 +493,91 @@ async function syncProfileServer(user: User) {
           delete coordPayload.auth_user_id;
           await supabase.from('coordinators').upsert(coordPayload, { onConflict: 'email' });
         }
+      } catch (cErr) {
+        console.warn('Sync coordinators error:', cErr);
+      }
+
+      // Secondary: sync to coordinator_profiles if table exists
+      try {
+        const coordIdNum = user.coordinatorIdNumber || user.buId || 'FAC-2026-CS-004';
+        await supabase.from('coordinator_profiles').upsert({
+          id: authUserId,
+          bu_id: coordIdNum,
+          full_name: user.fullName,
+          email: cleanEmail,
+          role: 'coordinator',
+          department: user.department || 'Department of Computer Science',
+          avatar_url: avatarToSave,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'email' });
       } catch {}
     } else {
-      const studentIdNum = user.studentIdNumber || user.buId;
-      let spPayload: any = {
-        ...(authUserId ? { id: authUserId } : {}),
-        user_id: authUserId,
-        student_id_number: studentIdNum,
-        bu_id: user.buId,
-        full_name: user.fullName,
-        email: cleanEmail,
-        department: user.department || 'Department of Computer Science',
-        class_block: user.classBlock || null,
-        avatar_url: avatarToSave,
-        updated_at: new Date().toISOString(),
-      };
-      let { error: spErr } = await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
-      if (spErr && (spErr.code === '23503' || String(spErr.message || '').includes('foreign key constraint'))) {
-        delete spPayload.user_id;
-        await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
+      // 1. Primary: sync to students table in Supabase
+      try {
+        let stPayload: any = {
+          id: authUserId,
+          auth_user_id: authUserId,
+          full_name: user.fullName,
+          required_hours: 240.00,
+          completed_hours: 0.00,
+        };
+        let { error: sErr } = await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
+        if (sErr && (sErr.code === '23503' || String(sErr.message || '').includes('foreign key constraint'))) {
+          delete stPayload.auth_user_id;
+          await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
+        }
+      } catch (sErr) {
+        console.warn('Sync students error:', sErr);
       }
+
+      // Secondary: sync to student_profiles if table exists
+      try {
+        await supabase.from('student_profiles').upsert({
+          id: authUserId,
+          bu_id: user.buId,
+          full_name: user.fullName,
+          email: cleanEmail,
+          department: user.department || 'Department of Computer Science',
+          class_block: user.classBlock || null,
+          avatar_url: avatarToSave,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'email' });
+      } catch {}
     }
 
-    // Keep unified profiles table synced as well
-    await supabase.from('profiles').upsert(
-      {
-        email: cleanEmail,
-        full_name: user.fullName,
-        role: user.role,
-        bu_id: user.buId,
-        department: user.department || 'Bicol University',
-        class_block: user.classBlock || null,
-        avatar_url: avatarToSave,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'email' }
-    );
+    // Update metadata in Supabase Auth
+    if (supabaseAdmin && isValidUuid(authUserId)) {
+      try {
+        await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+          user_metadata: {
+            full_name: user.fullName,
+            role: user.role,
+            bu_id: user.buId,
+            department: user.department || 'Department of Computer Science',
+            class_block: user.classBlock || '',
+            avatar_url: avatarToSave || '',
+          },
+        });
+      } catch {}
+    }
+
+    // Optional unified profiles table if present
+    try {
+      await supabase.from('profiles').upsert(
+        {
+          id: authUserId,
+          email: cleanEmail,
+          full_name: user.fullName,
+          role: user.role,
+          bu_id: user.buId,
+          department: user.department || 'Department of Computer Science',
+          class_block: user.classBlock || null,
+          avatar_url: avatarToSave,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'email' }
+      );
+    } catch {}
   } catch (err) {
     console.warn('Supabase profile sync note:', err);
   }
@@ -534,96 +589,77 @@ async function syncStudentServer(student: Student) {
   const avatarToSave = student.avatarUrl && student.avatarUrl.trim() !== '' ? student.avatarUrl.trim() : null;
   const singleProfileId = isValidUuid(student.id) ? student.id : getDeterministicUuid(cleanEmail);
   student.id = singleProfileId;
-  const studentIdNum = student.studentIdNumber || student.buId;
 
-  const payload: any = {
-    id: singleProfileId,
-    user_id: singleProfileId,
-    student_id_number: studentIdNum,
-    bu_id: student.buId,
-    full_name: student.fullName,
-    email: cleanEmail,
-    degree: student.degree || 'College Degree Program',
-    college: student.college || 'College of Science',
-    class_block: student.classBlock || null,
-    batch_id: student.batchId || 'batch-1',
-    company_id: student.companyId || null,
-    company_name: student.companyName || null,
-    company_branch: student.companyBranch || null,
-    mentor_name: student.mentorName || null,
-    coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-    coordinator_name: student.coordinatorName || null,
-    coordinator_email: student.coordinatorEmail || null,
-    duty_start: student.dutyStart || '08:00',
-    duty_end: student.dutyEnd || '17:00',
-    duty_days: student.dutyDays || 'Mon,Tue,Wed,Thu,Fri',
-    target_hours: student.targetHours || 240,
-    rendered_hours: student.renderedHours || 0,
-    attendance_rate: student.attendanceRate || 100,
-    enrollment_status: student.enrollmentStatus || 'not_enrolled',
-    scheduled_deployment_date: student.scheduledDeploymentDate || null,
-    deployment_approved: Boolean(student.deploymentApproved),
-    deployment_approved_at: student.deploymentApprovedAt || null,
-    enrollment_declined_reason: student.enrollmentDeclinedReason || null,
-    status: student.status || 'active',
-    is_archived: student.isArchived || false,
-    avatar_url: avatarToSave,
-    updated_at: new Date().toISOString(),
-  };
-
+  // 1. Primary: sync to students table in Supabase
   try {
-    // 1. Sync to dedicated student_profiles table
-    let spPayload: any = { ...payload };
-    let { error: spErr } = await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
-    if (spErr && (spErr.code === '23503' || String(spErr.message || '').includes('foreign key constraint'))) {
-      delete spPayload.user_id;
-      await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
+    let stPayload: any = {
+      id: singleProfileId,
+      auth_user_id: singleProfileId,
+      full_name: student.fullName,
+      required_hours: Number(student.targetHours) || 240.00,
+      completed_hours: Number(student.renderedHours) || 0.00,
+      coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
+    };
+    let { error: sErr } = await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
+    if (sErr && (sErr.code === '23503' || String(sErr.message || '').includes('foreign key constraint'))) {
+      delete stPayload.auth_user_id;
+      await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
     }
-
-    // 2. Also sync to students table (user's exact schema) - strictly maintain single profile record
-    try {
-      const { data: existingStudentRow } = await supabase
-        .from('students')
-        .select('id')
-        .or(`id.eq.${singleProfileId},auth_user_id.eq.${singleProfileId}`)
-        .maybeSingle();
-
-      if (existingStudentRow?.id) {
-        let { error: upErr } = await supabase.from('students').update({
-          auth_user_id: singleProfileId,
-          full_name: student.fullName,
-          required_hours: student.targetHours || 240,
-          completed_hours: student.renderedHours || 0,
-          coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-        }).eq('id', existingStudentRow.id);
-
-        if (upErr && (upErr.code === '23503' || String(upErr.message || '').includes('foreign key constraint'))) {
-          await supabase.from('students').update({
-            full_name: student.fullName,
-            required_hours: student.targetHours || 240,
-            completed_hours: student.renderedHours || 0,
-            coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-          }).eq('id', existingStudentRow.id);
-        }
-      } else {
-        let stPayload: any = {
-          id: singleProfileId,
-          auth_user_id: singleProfileId,
-          full_name: student.fullName,
-          required_hours: student.targetHours || 240,
-          completed_hours: student.renderedHours || 0,
-          coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-        };
-        let { error: insErr } = await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
-        if (insErr && (insErr.code === '23503' || String(insErr.message || '').includes('foreign key constraint'))) {
-          delete stPayload.auth_user_id;
-          await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
-        }
-      }
-    } catch {}
-  } catch (err) {
-    console.warn('Supabase student sync note:', err);
+  } catch (sErr) {
+    console.warn('Supabase student sync to students table note:', sErr);
   }
+
+  // 2. Also keep user_metadata updated in Supabase Auth so profile attributes persist
+  if (supabaseAdmin && isValidUuid(singleProfileId)) {
+    try {
+      await supabaseAdmin.auth.admin.updateUserById(singleProfileId, {
+        user_metadata: {
+          full_name: student.fullName,
+          role: 'student',
+          bu_id: student.buId,
+          department: student.college || 'Department of Computer Science',
+          class_block: student.classBlock || '',
+          degree: student.degree || 'BS Computer Science',
+          company_id: student.companyId || '',
+          company_name: student.companyName || '',
+          company_branch: student.companyBranch || '',
+          mentor_name: student.mentorName || '',
+          coordinator_id: student.coordinatorId || '',
+          coordinator_name: student.coordinatorName || '',
+          coordinator_email: student.coordinatorEmail || '',
+          duty_start: student.dutyStart || '08:00',
+          duty_end: student.dutyEnd || '17:00',
+          target_hours: student.targetHours || 240,
+          rendered_hours: student.renderedHours || 0,
+          enrollment_status: student.enrollmentStatus || 'not_enrolled',
+          deployment_approved: Boolean(student.deploymentApproved),
+          status: student.status || 'active',
+          avatar_url: avatarToSave || '',
+        },
+      });
+    } catch {}
+  }
+
+  // 3. Secondary: sync to student_profiles if table exists
+  try {
+    await supabase.from('student_profiles').upsert({
+      id: singleProfileId,
+      bu_id: student.buId,
+      full_name: student.fullName,
+      email: cleanEmail,
+      degree: student.degree || 'BS Computer Science',
+      class_block: student.classBlock || null,
+      company_id: student.companyId || null,
+      company_name: student.companyName || null,
+      coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
+      target_hours: student.targetHours || 240,
+      rendered_hours: student.renderedHours || 0,
+      enrollment_status: student.enrollmentStatus || 'not_enrolled',
+      status: student.status || 'active',
+      avatar_url: avatarToSave,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'email' });
+  } catch {}
 }
 
 async function syncAttendanceServer(log: AttendanceLog) {
@@ -638,17 +674,15 @@ async function syncAttendanceServer(log: AttendanceLog) {
       if (isValidUuid(matched.id)) studentUuid = matched.id;
     }
 
-    // If UUID not yet found, look up student_profiles table in Supabase
     if (!studentUuid) {
-      const { data: sp } = await supabase
-        .from('student_profiles')
-        .select('id, student_id_number, bu_id')
-        .or(`bu_id.eq.${studentIdNum || 'NONE'},student_id_number.eq.${studentIdNum || 'NONE'},full_name.eq.${log.studentName}`)
-        .maybeSingle();
-      if (sp?.id) {
-        studentUuid = sp.id;
-        studentIdNum = sp.student_id_number || sp.bu_id || studentIdNum;
-      }
+      try {
+        const { data: sRow } = await supabase
+          .from('students')
+          .select('id')
+          .eq('full_name', log.studentName)
+          .maybeSingle();
+        if (sRow?.id) studentUuid = sRow.id;
+      } catch {}
     }
 
     if (!studentUuid) {
@@ -656,51 +690,38 @@ async function syncAttendanceServer(log: AttendanceLog) {
       return;
     }
 
-    await supabase.from('attendance_logs').insert({
-      student_id: studentUuid,
-      student_id_number: studentIdNum || null,
-      student_name: log.studentName,
-      company_id: log.companyId || null,
-      company_name: log.companyName || null,
-      date: log.date,
-      time_in: log.actualTimeIn || null,
-      time_out: log.actualTimeOut || null,
-      hours_rendered: log.hoursRendered || 0,
-      status: log.status || 'present',
-      verification_status: log.verificationStatus || 'verified',
-      workstation_ip: log.workstationIp || '192.168.10.155',
-      remarks: log.remarks || null,
-      dtr_image_link: log.dtrImageLink || null,
-      created_at: new Date().toISOString(),
-    });
-
-    // Also sync to attendances table (user's exact schema)
+    // 1. Primary: sync to attendances table in Supabase
     try {
-      let targetStudentId = studentUuid;
-      if (!targetStudentId) {
-        const { data: sRow } = await supabase
-          .from('students')
-          .select('id')
-          .eq('full_name', log.studentName)
-          .maybeSingle();
-        if (sRow?.id) targetStudentId = sRow.id;
-      }
-
-      if (targetStudentId) {
-        await supabase.from('attendances').insert({
-          student_id: targetStudentId,
-          date: toIsoDate(log.date),
-          time_in: toIsoDateTime(log.date, log.actualTimeIn),
-          time_out: toIsoDateTime(log.date, log.actualTimeOut),
-          hours_rendered: Number(log.hoursRendered) || 0,
-          ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
-          dtr_image_link: log.dtrImageLink || null,
-          created_at: new Date().toISOString(),
-        });
-      }
+      await supabase.from('attendances').insert({
+        student_id: studentUuid,
+        date: toIsoDate(log.date),
+        time_in: toIsoDateTime(log.date, log.actualTimeIn),
+        time_out: toIsoDateTime(log.date, log.actualTimeOut),
+        hours_rendered: Number(log.hoursRendered) || 0,
+        ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
+      });
     } catch (attErr) {
       console.warn('Supabase attendances sync note:', attErr);
     }
+
+    // 2. Secondary: sync to attendance_logs if table exists
+    try {
+      await supabase.from('attendance_logs').insert({
+        student_id: studentUuid,
+        student_id_number: studentIdNum || null,
+        student_name: log.studentName,
+        company_id: log.companyId || null,
+        company_name: log.companyName || null,
+        date: log.date,
+        time_in: log.actualTimeIn || null,
+        time_out: log.actualTimeOut || null,
+        hours_rendered: log.hoursRendered || 0,
+        status: log.status || 'present',
+        workstation_ip: log.workstationIp || '192.168.10.155',
+        remarks: log.remarks || null,
+        created_at: new Date().toISOString(),
+      });
+    } catch {}
   } catch (err) {
     console.warn('Supabase attendance sync note:', err);
   }
@@ -710,24 +731,21 @@ async function syncAccomplishmentServer(rep: AccomplishmentReport) {
   if (!supabase) return;
   try {
     let studentUuid = isValidUuid(rep.studentId) ? rep.studentId : null;
-    let studentIdNum = rep.studentIdNumber || '';
 
     const matched = students.find((s) => s.id === rep.studentId || s.fullName === rep.studentName);
-    if (matched) {
-      studentIdNum = matched.studentIdNumber || matched.buId;
-      if (isValidUuid(matched.id)) studentUuid = matched.id;
+    if (matched && isValidUuid(matched.id)) {
+      studentUuid = matched.id;
     }
 
     if (!studentUuid) {
-      const { data: sp } = await supabase
-        .from('student_profiles')
-        .select('id, student_id_number, bu_id')
-        .or(`bu_id.eq.${studentIdNum || 'NONE'},student_id_number.eq.${studentIdNum || 'NONE'},full_name.eq.${rep.studentName}`)
-        .maybeSingle();
-      if (sp?.id) {
-        studentUuid = sp.id;
-        studentIdNum = sp.student_id_number || sp.bu_id || studentIdNum;
-      }
+      try {
+        const { data: sRow } = await supabase
+          .from('students')
+          .select('id')
+          .eq('full_name', rep.studentName)
+          .maybeSingle();
+        if (sRow?.id) studentUuid = sRow.id;
+      } catch {}
     }
 
     if (!studentUuid) {
@@ -735,25 +753,7 @@ async function syncAccomplishmentServer(rep: AccomplishmentReport) {
       return;
     }
 
-    await supabase.from('accomplishment_reports').insert({
-      student_id: studentUuid,
-      student_id_number: studentIdNum || null,
-      student_name: rep.studentName,
-      company_id: rep.companyId || null,
-      company_name: rep.companyName || null,
-      date: rep.date,
-      week_number: rep.weekNumber || 1,
-      work_category: rep.workCategory,
-      task_title: rep.taskTitle,
-      task_description: rep.taskDescription,
-      supervisor_assigned_duty: rep.supervisorAssignedDuty || null,
-      hours_spent: rep.hoursSpent,
-      task_status: rep.taskStatus || 'completed',
-      obstacles_faced: rep.obstaclesFaced || null,
-      created_at: new Date().toISOString(),
-    });
-
-    // Also sync to accomplishment_reports table (user's exact schema)
+    // 1. Primary: sync to accomplishment_reports table in Supabase
     try {
       const isoDate = toIsoDate(rep.date);
       await supabase.from('accomplishment_reports').insert({
@@ -763,7 +763,6 @@ async function syncAccomplishmentServer(rep: AccomplishmentReport) {
         raw_task_logs: `${rep.workCategory}: ${rep.taskTitle} - ${rep.taskDescription} (${rep.hoursSpent}h rendered)`,
         nlp_summary: rep.obstaclesFaced || rep.taskDescription || rep.taskTitle,
         status: rep.taskStatus === 'completed' ? 'Approved' : 'Pending',
-        created_at: new Date().toISOString(),
       });
     } catch (repErr) {
       console.warn('Supabase accomplishment_reports sync note:', repErr);
@@ -777,189 +776,264 @@ async function syncAccomplishmentServer(rep: AccomplishmentReport) {
 async function loadInitialDataFromSupabase() {
   if (!supabase) return;
   try {
-    // 1. Load Coordinators from coordinator_profiles
-    const { data: coordData } = await supabase
-      .from('coordinator_profiles')
-      .select('*');
-    if (coordData && coordData.length > 0) {
-      coordData.forEach((cp: any) => {
-        const cleanEmail = (cp.email || '').toLowerCase().trim();
-        const coordId = cp.user_id || cp.id;
-        const coordNum = cp.coordinator_id_number || cp.bu_id || 'FAC-2026-CS-004';
-        const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
-        if (!existing) {
-          users.push({
-            id: coordId,
-            email: cleanEmail,
-            fullName: cp.full_name || 'Practicum Coordinator',
-            role: 'coordinator',
-            buId: coordNum,
-            coordinatorIdNumber: coordNum,
-            department: cp.department || 'Department of Computer Science',
-            classBlock: '',
-            batchId: 'batch-1',
-            avatarUrl: cp.avatar_url || '',
-          });
-        } else {
-          existing.id = coordId;
-          existing.coordinatorIdNumber = coordNum;
-          existing.avatarUrl = cp.avatar_url || existing.avatarUrl;
-        }
-      });
+    // 1. Fetch Supabase Auth users to get user_metadata for all registered accounts
+    let authUsers: any[] = [];
+    if (supabaseAdmin) {
+      try {
+        const { data: uData } = await supabaseAdmin.auth.admin.listUsers();
+        if (uData?.users) authUsers = uData.users;
+      } catch (err) {
+        console.warn('Could not list auth users from Supabase admin:', err);
+      }
     }
 
-    // 2. Load Students from student_profiles with coordinator relational join
-    const { data: stuData } = await supabase
-      .from('student_profiles')
-      .select('*, coordinator_profiles(id, full_name, email)');
-    if (stuData && stuData.length > 0) {
-      stuData.forEach((sp: any) => {
-        const cleanEmail = (sp.email || '').toLowerCase().trim();
-        const studentId = sp.user_id || sp.id;
-        const studentIdNum = sp.student_id_number || sp.bu_id || extractStudentIdFromEmail(cleanEmail);
+    // 2. Load Coordinators from coordinators table (and optional coordinator_profiles)
+    let coordList: any[] = [];
+    try {
+      const { data: cData } = await supabase.from('coordinators').select('*');
+      if (cData && cData.length > 0) coordList = cData;
+    } catch {}
 
-        const cp = sp.coordinator_profiles || {};
-        const resolvedCoordinatorId = sp.coordinator_id || cp.id || undefined;
-        const resolvedCoordinatorName = sp.coordinator_name || cp.full_name || undefined;
-        const resolvedCoordinatorEmail = sp.coordinator_email || cp.email || undefined;
+    if (coordList.length === 0) {
+      try {
+        const { data: cpData } = await supabase.from('coordinator_profiles').select('*');
+        if (cpData && cpData.length > 0) coordList = cpData;
+      } catch {}
+    }
 
-        if (!users.some((u) => u.email.toLowerCase() === cleanEmail)) {
+    // Also include any coordinators registered in authUsers
+    authUsers.filter(u => u.user_metadata?.role === 'coordinator').forEach(u => {
+      const email = (u.email || '').toLowerCase().trim();
+      if (!coordList.some(c => (c.email || '').toLowerCase().trim() === email)) {
+        coordList.push({
+          id: u.id,
+          auth_user_id: u.id,
+          full_name: u.user_metadata?.full_name || email.split('@')[0],
+          email,
+          department: u.user_metadata?.department || 'Department of Computer Science',
+          bu_id: u.user_metadata?.bu_id || 'FAC-2026-CS-004',
+        });
+      }
+    });
+
+    coordList.forEach((c: any) => {
+      const cleanEmail = (c.email || '').toLowerCase().trim();
+      const coordId = c.auth_user_id || c.id;
+      const coordNum = c.bu_id || c.coordinator_id_number || 'FAC-2026-CS-004';
+      const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
+      if (!existing) {
+        users.push({
+          id: coordId,
+          email: cleanEmail,
+          fullName: c.full_name || 'Practicum Coordinator',
+          role: 'coordinator',
+          buId: coordNum,
+          coordinatorIdNumber: coordNum,
+          department: c.department || 'Department of Computer Science',
+          classBlock: '',
+          batchId: 'batch-1',
+          avatarUrl: c.avatar_url || '',
+        });
+      } else {
+        existing.id = coordId;
+        existing.fullName = c.full_name || existing.fullName;
+        existing.department = c.department || existing.department;
+      }
+    });
+
+    // 3. Load Students from students table in Supabase
+    let studentRows: any[] = [];
+    try {
+      const { data: sData } = await supabase.from('students').select('*');
+      if (sData && sData.length > 0) studentRows = sData;
+    } catch {}
+
+    studentRows.forEach((s: any) => {
+      const studentId = s.id;
+      const matchingAuth = authUsers.find(u => u.id === s.auth_user_id || u.id === s.id);
+      const cleanEmail = (matchingAuth?.email || '').toLowerCase().trim();
+      if (!cleanEmail) return;
+
+      const meta = matchingAuth?.user_metadata || {};
+      const studentIdNum = meta.bu_id || meta.student_id || extractStudentIdFromEmail(cleanEmail);
+      const degreeInfo = resolveDegreeInfo(meta.class_block);
+      const matchingCoord = users.find(u => u.id === s.coordinator_id) || coordList.find(c => c.id === s.coordinator_id);
+
+      // Add or update in users
+      const existingUser = users.find((u) => u.email.toLowerCase() === cleanEmail);
+      if (!existingUser) {
+        users.push({
+          id: studentId,
+          email: cleanEmail,
+          fullName: s.full_name || meta.full_name || cleanEmail.split('@')[0],
+          role: 'student',
+          buId: studentIdNum,
+          department: meta.department || degreeInfo.department,
+          classBlock: meta.class_block || '',
+          batchId: s.batch_id || 'batch-1',
+          avatarUrl: meta.avatar_url || '',
+        });
+      } else {
+        existingUser.id = studentId;
+        existingUser.fullName = s.full_name || existingUser.fullName;
+      }
+
+      // Add or update in students
+      const existingStudent = students.find((st) => st.email.toLowerCase() === cleanEmail);
+      if (existingStudent) {
+        existingStudent.id = studentId;
+        existingStudent.fullName = s.full_name || existingStudent.fullName;
+        existingStudent.targetHours = Number(s.required_hours) || existingStudent.targetHours;
+        existingStudent.renderedHours = Number(s.completed_hours) || existingStudent.renderedHours;
+        existingStudent.coordinatorId = s.coordinator_id || existingStudent.coordinatorId;
+        if (matchingCoord) {
+          existingStudent.coordinatorName = matchingCoord.full_name || matchingCoord.fullName;
+          existingStudent.coordinatorEmail = matchingCoord.email;
+        }
+      } else {
+        students.push({
+          id: studentId,
+          buId: studentIdNum,
+          studentIdNumber: studentIdNum,
+          fullName: s.full_name || meta.full_name || 'Student Intern',
+          email: cleanEmail,
+          degree: meta.degree || degreeInfo.degree,
+          college: 'College of Science',
+          classBlock: meta.class_block || '',
+          batchId: s.batch_id || 'batch-1',
+          enrollmentType: 'individual',
+          companyId: meta.company_id || '',
+          companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
+          companyBranch: meta.company_branch || '',
+          mentorName: meta.mentor_name || 'Unassigned',
+          coordinatorId: s.coordinator_id || undefined,
+          coordinatorName: matchingCoord ? (matchingCoord.full_name || matchingCoord.fullName) : undefined,
+          coordinatorEmail: matchingCoord?.email || undefined,
+          dutyStart: meta.duty_start || '08:00',
+          dutyEnd: meta.duty_end || '17:00',
+          dutyDays: meta.duty_days || 'Mon,Tue,Wed,Thu,Fri',
+          targetHours: Number(s.required_hours) || 240,
+          renderedHours: Number(s.completed_hours) || 0,
+          attendanceRate: 100,
+          status: (meta.status as any) || 'active',
+          enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
+          deploymentApproved: Boolean(meta.deployment_approved),
+          avatarUrl: meta.avatar_url || '',
+        });
+      }
+    });
+
+    // Also include student accounts from authUsers if not yet present
+    authUsers.filter(u => u.user_metadata?.role === 'student').forEach(u => {
+      const email = (u.email || '').toLowerCase().trim();
+      if (!students.some(s => s.email.toLowerCase() === email)) {
+        const meta = u.user_metadata || {};
+        const buId = meta.bu_id || extractStudentIdFromEmail(email);
+        const degreeInfo = resolveDegreeInfo(meta.class_block);
+        const studentObj: Student = {
+          id: u.id,
+          buId,
+          studentIdNumber: buId,
+          fullName: meta.full_name || email.split('@')[0],
+          email,
+          degree: meta.degree || degreeInfo.degree,
+          college: 'College of Science',
+          classBlock: meta.class_block || '',
+          batchId: 'batch-1',
+          enrollmentType: 'individual',
+          companyId: meta.company_id || '',
+          companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
+          companyBranch: meta.company_branch || '',
+          mentorName: meta.mentor_name || 'Unassigned',
+          dutyStart: meta.duty_start || '08:00',
+          dutyEnd: meta.duty_end || '17:00',
+          dutyDays: meta.duty_days || 'Mon,Tue,Wed,Thu,Fri',
+          targetHours: 240,
+          renderedHours: 0,
+          attendanceRate: 100,
+          status: 'active',
+          enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
+          deploymentApproved: Boolean(meta.deployment_approved),
+          avatarUrl: meta.avatar_url || '',
+        };
+        students.push(studentObj);
+        if (!users.some(us => us.email.toLowerCase() === email)) {
           users.push({
-            id: studentId,
-            email: cleanEmail,
-            fullName: sp.full_name,
+            id: u.id,
+            email,
+            fullName: studentObj.fullName,
             role: 'student',
-            buId: studentIdNum,
-            studentIdNumber: studentIdNum,
-            department: sp.department || 'Department of Computer Science',
-            classBlock: sp.class_block || '',
-            batchId: sp.batch_id || 'batch-1',
-            avatarUrl: sp.avatar_url || '',
+            buId,
+            department: meta.department || degreeInfo.department,
+            classBlock: meta.class_block || '',
+            batchId: 'batch-1',
+            avatarUrl: meta.avatar_url || '',
           });
         }
+        // Mirror to students table
+        syncStudentServer(studentObj);
+      }
+    });
 
-        const resolvedEnrollmentStatus = sp.enrollment_status || 'not_enrolled';
-        const resolvedDeploymentApproved = sp.deployment_approved !== undefined
-          ? Boolean(sp.deployment_approved)
-          : resolvedEnrollmentStatus === 'approved';
+    // 4. Load Attendances from attendances table
+    try {
+      const { data: attData } = await supabase
+        .from('attendances')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (attData && attData.length > 0) {
+        attendanceLogs = attData.map((a: any) => {
+          const matchedSt = students.find(s => s.id === a.student_id);
+          return {
+            id: a.id,
+            studentId: a.student_id,
+            studentIdNumber: matchedSt?.buId || '',
+            studentName: matchedSt?.fullName || 'Student Intern',
+            companyId: matchedSt?.companyId || '',
+            companyName: matchedSt?.companyName || '',
+            date: a.date,
+            expectedTimeIn: '08:00',
+            actualTimeIn: a.time_in ? (a.time_in.includes('T') ? a.time_in.split('T')[1].slice(0, 5) : a.time_in) : '08:00',
+            expectedTimeOut: '17:00',
+            actualTimeOut: a.time_out ? (a.time_out.includes('T') ? a.time_out.split('T')[1].slice(0, 5) : a.time_out) : undefined,
+            hoursRendered: Number(a.hours_rendered) || 0,
+            status: a.ai_flagged ? 'undertime' : 'present',
+            verificationStatus: 'verified',
+            workstationIp: '192.168.10.155',
+          };
+        });
+      }
+    } catch {}
 
-        const existingStudent = students.find((s) => s.email.toLowerCase() === cleanEmail);
-        if (existingStudent) {
-          existingStudent.id = studentId;
-          existingStudent.buId = studentIdNum;
-          existingStudent.studentIdNumber = studentIdNum;
-          existingStudent.fullName = sp.full_name || existingStudent.fullName;
-          existingStudent.degree = sp.degree || existingStudent.degree;
-          existingStudent.college = sp.college || existingStudent.college;
-          existingStudent.classBlock = sp.class_block || existingStudent.classBlock;
-          existingStudent.batchId = sp.batch_id || existingStudent.batchId;
-          existingStudent.companyId = sp.company_id || '';
-          existingStudent.companyName = sp.company_name || 'Not Yet Enrolled (Pending Application)';
-          existingStudent.companyBranch = sp.company_branch || '';
-          existingStudent.mentorName = sp.mentor_name || 'Unassigned';
-          existingStudent.coordinatorId = resolvedCoordinatorId;
-          existingStudent.coordinatorName = resolvedCoordinatorName;
-          existingStudent.coordinatorEmail = resolvedCoordinatorEmail;
-          existingStudent.dutyStart = sp.duty_start || '08:00';
-          existingStudent.dutyEnd = sp.duty_end || '17:00';
-          existingStudent.dutyDays = sp.duty_days || 'Mon,Tue,Wed,Thu,Fri';
-          existingStudent.targetHours = Number(sp.target_hours) || 240;
-          existingStudent.renderedHours = Number(sp.rendered_hours) || 0;
-          existingStudent.attendanceRate = Number(sp.attendance_rate) || 100;
-          existingStudent.status = sp.status || 'active';
-          existingStudent.enrollmentStatus = resolvedEnrollmentStatus;
-          existingStudent.scheduledDeploymentDate = sp.scheduled_deployment_date || undefined;
-          existingStudent.deploymentApproved = resolvedDeploymentApproved;
-          existingStudent.deploymentApprovedAt = sp.deployment_approved_at || undefined;
-          existingStudent.enrollmentDeclinedReason = sp.enrollment_declined_reason || undefined;
-          existingStudent.avatarUrl = sp.avatar_url || existingStudent.avatarUrl;
-        } else {
-          students.push({
-            id: studentId,
-            buId: studentIdNum,
-            studentIdNumber: studentIdNum,
-            fullName: sp.full_name,
-            email: cleanEmail,
-            degree: sp.degree || 'BS Computer Science',
-            college: sp.college || 'College of Science',
-            classBlock: sp.class_block || '',
-            batchId: sp.batch_id || 'batch-1',
-            enrollmentType: 'individual',
-            companyId: sp.company_id || '',
-            companyName: sp.company_name || 'Not Yet Enrolled (Pending Application)',
-            companyBranch: sp.company_branch || '',
-            mentorName: sp.mentor_name || 'Unassigned',
-            coordinatorId: resolvedCoordinatorId,
-            coordinatorName: resolvedCoordinatorName,
-            coordinatorEmail: resolvedCoordinatorEmail,
-            dutyStart: sp.duty_start || '08:00',
-            dutyEnd: sp.duty_end || '17:00',
-            dutyDays: sp.duty_days || 'Mon,Tue,Wed,Thu,Fri',
-            targetHours: Number(sp.target_hours) || 240,
-            renderedHours: Number(sp.rendered_hours) || 0,
-            attendanceRate: Number(sp.attendance_rate) || 100,
-            status: sp.status || 'active',
-            enrollmentStatus: resolvedEnrollmentStatus,
-            scheduledDeploymentDate: sp.scheduled_deployment_date || undefined,
-            deploymentApproved: resolvedDeploymentApproved,
-            deploymentApprovedAt: sp.deployment_approved_at || undefined,
-            enrollmentDeclinedReason: sp.enrollment_declined_reason || undefined,
-            avatarUrl: sp.avatar_url || '',
-          });
-        }
-      });
-    }
-
-    // 3. Load Attendance Logs from attendance_logs table
-    const { data: attData } = await supabase
-      .from('attendance_logs')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (attData && attData.length > 0) {
-      attendanceLogs = attData.map((a: any) => ({
-        id: a.id,
-        studentId: a.student_id,
-        studentIdNumber: a.student_id_number,
-        studentName: a.student_name,
-        companyId: a.company_id || '',
-        companyName: a.company_name || '',
-        date: a.date,
-        expectedTimeIn: a.expected_time_in || '08:00',
-        actualTimeIn: a.time_in,
-        expectedTimeOut: a.expected_time_out || '17:00',
-        actualTimeOut: a.time_out,
-        hoursRendered: Number(a.hours_rendered) || 0,
-        status: a.status || 'present',
-        verificationStatus: a.verification_status || 'verified',
-        workstationIp: a.workstation_ip || '192.168.10.155',
-        remarks: a.remarks || undefined,
-      }));
-    }
-
-    // 4. Load Accomplishment Reports from accomplishment_reports table
-    const { data: repData } = await supabase
-      .from('accomplishment_reports')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (repData && repData.length > 0) {
-      accomplishmentReports = repData.map((r: any) => ({
-        id: r.id,
-        studentId: r.student_id,
-        studentIdNumber: r.student_id_number,
-        studentName: r.student_name,
-        companyId: r.company_id || '',
-        companyName: r.company_name || '',
-        date: r.date,
-        weekNumber: Number(r.week_number) || 1,
-        workCategory: r.work_category,
-        taskTitle: r.task_title,
-        taskDescription: r.task_description,
-        supervisorAssignedDuty: r.supervisor_assigned_duty,
-        hoursSpent: Number(r.hours_spent) || 8.0,
-        taskStatus: r.task_status || 'completed',
-        obstaclesFaced: r.obstacles_faced,
-      }));
-    }
+    // 5. Load Accomplishment Reports from accomplishment_reports table
+    try {
+      const { data: repData } = await supabase
+        .from('accomplishment_reports')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (repData && repData.length > 0) {
+        accomplishmentReports = repData.map((r: any) => {
+          const matchedSt = students.find(s => s.id === r.student_id);
+          return {
+            id: r.id,
+            studentId: r.student_id,
+            studentIdNumber: matchedSt?.buId || '',
+            studentName: matchedSt?.fullName || 'Student Intern',
+            companyId: matchedSt?.companyId || '',
+            companyName: matchedSt?.companyName || '',
+            date: r.week_start || toIsoDate(r.created_at),
+            weekNumber: 1,
+            workCategory: (['System Testing & QA', 'Documentation', 'Frontend Dev', 'Backend Dev', 'Network & IT Support', 'Data Analytics'].find(cat => r.raw_task_logs?.startsWith(cat)) || 'Documentation') as any,
+            taskTitle: r.raw_task_logs ? (r.raw_task_logs.includes(':') ? r.raw_task_logs.split(':')[0] : 'Weekly Practicum Log') : 'Weekly Log',
+            taskDescription: r.raw_task_logs || '',
+            hoursSpent: 8,
+            taskStatus: r.status === 'Approved' ? 'completed' : 'in_progress',
+            obstaclesFaced: r.nlp_summary || '',
+            createdAt: r.created_at,
+          };
+        });
+      }
+    } catch {}
   } catch (e) {
     console.warn('Initial data load from Supabase note:', e);
   }
@@ -1007,14 +1081,41 @@ let isoEvaluations = [
   },
 ];
 
-async function startServer() {
-  const app = express();
-  app.use(express.json());
+export const app = express();
+app.use(express.json());
 
-  // Bootstrap initial profiles, attendance, and accomplishment records from Supabase
-  await loadInitialDataFromSupabase();
+// Normalize URL in case serverless handler or rewrite stripped /api prefix
+app.use((req, res, next) => {
+  if (!req.url.startsWith('/api') && !req.url.startsWith('/assets') && !req.url.includes('.')) {
+    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  }
+  next();
+});
 
-  // --- API Endpoints ---
+let supabaseInitialized = false;
+app.use(async (req, res, next) => {
+  if (!supabaseInitialized) {
+    try {
+      await loadInitialDataFromSupabase();
+      supabaseInitialized = true;
+    } catch (e) {
+      console.warn('Supabase lazy load note:', e);
+    }
+  }
+  next();
+});
+
+// --- API Endpoints ---
+
+  // API Root and Health
+  app.get('/api', (req: Request, res: Response) => {
+    res.json({
+      status: 'ok',
+      system: 'InternTrack Practicum Monitoring System',
+      supabaseConnected: isSupabaseReady,
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   // Health and System Info
   app.get('/api/health', (req: Request, res: Response) => {
@@ -1463,23 +1564,32 @@ async function startServer() {
 
     let user = users.find((u) => u.email.toLowerCase() === cleanEmail);
 
-    // Auto-resolve user from Supabase coordinator_profiles or student_profiles if registered
+    // Auto-resolve user from Supabase coordinators or students / auth.users if registered
     if (!user && supabase) {
       try {
         if (role === 'coordinator') {
-          const { data: cp } = await supabase
-            .from('coordinator_profiles')
-            .select('*')
-            .eq('email', cleanEmail)
-            .maybeSingle();
+          // Check coordinators table first
+          let cp: any = null;
+          try {
+            const { data } = await supabase.from('coordinators').select('*').eq('email', cleanEmail).maybeSingle();
+            cp = data;
+          } catch {}
+
+          if (!cp) {
+            try {
+              const { data } = await supabase.from('coordinator_profiles').select('*').eq('email', cleanEmail).maybeSingle();
+              cp = data;
+            } catch {}
+          }
+
           if (cp) {
-            const singleProfileId = (cp.user_id && isValidUuid(cp.user_id)) ? cp.user_id : (isValidUuid(cp.id) ? cp.id : getDeterministicUuid(cleanEmail));
+            const singleProfileId = cp.auth_user_id || cp.id;
             const newUser: User = {
               id: singleProfileId,
               email: cp.email,
               fullName: cp.full_name || cleanEmail.split('@')[0],
               role: 'coordinator',
-              buId: cp.bu_id || 'FAC-2026-001',
+              buId: cp.bu_id || cp.coordinator_id_number || 'FAC-2026-CS-004',
               department: cp.department || 'Department of Computer Science',
               classBlock: '',
               batchId: 'batch-1',
@@ -1489,76 +1599,66 @@ async function startServer() {
             user = newUser;
           }
         } else {
-          const { data: sp } = await supabase
-            .from('student_profiles')
-            .select('*')
-            .eq('email', cleanEmail)
-            .maybeSingle();
-          if (sp) {
-            const singleProfileId = (sp.user_id && isValidUuid(sp.user_id)) ? sp.user_id : (isValidUuid(sp.id) ? sp.id : getDeterministicUuid(cleanEmail));
-            const newUser: User = {
-              id: singleProfileId,
-              email: sp.email,
-              fullName: sp.full_name || cleanEmail.split('@')[0],
-              role: 'student',
-              buId: sp.bu_id || extractStudentIdFromEmail(cleanEmail),
-              department: sp.department || 'College of Science',
-              classBlock: sp.class_block || '',
-              batchId: 'batch-1',
-              avatarUrl: sp.avatar_url || '',
-            };
-            users.push(newUser);
-            user = newUser;
+          // Student role: check auth.users and students table
+          if (supabaseAdmin) {
+            const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
+            const foundUser = usersData?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
+            if (foundUser) {
+              const meta = foundUser.user_metadata || {};
+              const singleProfileId = foundUser.id;
+              const assumedStudentId = meta.bu_id || meta.student_id || extractStudentIdFromEmail(cleanEmail);
+              const degreeInfo = resolveDegreeInfo(meta.class_block);
 
-            let existingStudent = students.find((s) => s.email.toLowerCase() === cleanEmail);
-            if (!existingStudent) {
-              existingStudent = {
+              const newUser: User = {
                 id: singleProfileId,
-                buId: sp.student_id_number || sp.bu_id || newUser.buId,
-                studentIdNumber: sp.student_id_number || sp.bu_id || newUser.buId,
-                fullName: sp.full_name || newUser.fullName,
-                email: sp.email,
-                degree: sp.degree || 'BS Computer Science',
-                college: sp.college || 'College of Science',
-                classBlock: sp.class_block || '',
-                batchId: sp.batch_id || 'batch-1',
-                enrollmentType: 'individual',
-                companyId: sp.company_id || '',
-                companyName: sp.company_name || 'Not Yet Enrolled (Pending Application)',
-                companyBranch: sp.company_branch || '',
-                mentorName: sp.mentor_name || 'Unassigned',
-                coordinatorId: sp.coordinator_id || undefined,
-                coordinatorName: sp.coordinator_name || undefined,
-                coordinatorEmail: sp.coordinator_email || undefined,
-                dutyStart: sp.duty_start || '08:00',
-                dutyEnd: sp.duty_end || '17:00',
-                dutyDays: sp.duty_days || 'Mon,Tue,Wed,Thu,Fri',
-                targetHours: Number(sp.target_hours) || 240,
-                renderedHours: Number(sp.rendered_hours) || 0,
-                attendanceRate: Number(sp.attendance_rate) || 100,
-                status: (sp.status as any) || 'active',
-                enrollmentStatus: (sp.enrollment_status as any) || 'not_enrolled',
-                deploymentApproved: sp.deployment_approved !== undefined ? Boolean(sp.deployment_approved) : sp.enrollment_status === 'approved',
-                deploymentApprovedAt: sp.deployment_approved_at || undefined,
-                enrollmentDeclinedReason: sp.enrollment_declined_reason || undefined,
-                avatarUrl: sp.avatar_url || '',
+                email: foundUser.email!,
+                fullName: meta.full_name || cleanEmail.split('@')[0],
+                role: 'student',
+                buId: assumedStudentId,
+                department: meta.department || degreeInfo.department,
+                classBlock: meta.class_block || '',
+                batchId: 'batch-1',
+                avatarUrl: meta.avatar_url || '',
               };
-              students.push(existingStudent);
-            } else {
-              existingStudent.enrollmentStatus = (sp.enrollment_status as any) || existingStudent.enrollmentStatus;
-              existingStudent.deploymentApproved = sp.deployment_approved !== undefined ? Boolean(sp.deployment_approved) : (sp.enrollment_status === 'approved');
-              existingStudent.deploymentApprovedAt = sp.deployment_approved_at || existingStudent.deploymentApprovedAt;
-              existingStudent.enrollmentDeclinedReason = sp.enrollment_declined_reason || existingStudent.enrollmentDeclinedReason;
-              if (sp.company_name) existingStudent.companyName = sp.company_name;
-              if (sp.company_id) existingStudent.companyId = sp.company_id;
-              if (sp.company_branch) existingStudent.companyBranch = sp.company_branch;
-              if (sp.mentor_name) existingStudent.mentorName = sp.mentor_name;
-              if (sp.duty_start) existingStudent.dutyStart = sp.duty_start;
-              if (sp.duty_end) existingStudent.dutyEnd = sp.duty_end;
-              if (sp.target_hours) existingStudent.targetHours = Number(sp.target_hours);
-              if (sp.rendered_hours) existingStudent.renderedHours = Number(sp.rendered_hours);
-              if (sp.attendance_rate) existingStudent.attendanceRate = Number(sp.attendance_rate);
-              if (sp.avatar_url) existingStudent.avatarUrl = sp.avatar_url;
+              users.push(newUser);
+              user = newUser;
+
+              // Check students table for practicum tracking data
+              const { data: sRow } = await supabase.from('students').select('*').or(`id.eq.${singleProfileId},auth_user_id.eq.${singleProfileId}`).maybeSingle();
+
+              let existingStudent = students.find((s) => s.email.toLowerCase() === cleanEmail);
+              if (!existingStudent) {
+                existingStudent = {
+                  id: singleProfileId,
+                  buId: assumedStudentId,
+                  studentIdNumber: assumedStudentId,
+                  fullName: sRow?.full_name || newUser.fullName,
+                  email: cleanEmail,
+                  degree: meta.degree || degreeInfo.degree,
+                  college: 'College of Science',
+                  classBlock: newUser.classBlock || '',
+                  batchId: 'batch-1',
+                  enrollmentType: 'individual',
+                  companyId: meta.company_id || '',
+                  companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
+                  companyBranch: meta.company_branch || '',
+                  mentorName: meta.mentor_name || 'Unassigned',
+                  coordinatorId: sRow?.coordinator_id || meta.coordinator_id || undefined,
+                  coordinatorName: meta.coordinator_name || undefined,
+                  coordinatorEmail: meta.coordinator_email || undefined,
+                  dutyStart: meta.duty_start || '08:00',
+                  dutyEnd: meta.duty_end || '17:00',
+                  dutyDays: meta.duty_days || 'Mon,Tue,Wed,Thu,Fri',
+                  targetHours: Number(sRow?.required_hours) || Number(meta.target_hours) || 240,
+                  renderedHours: Number(sRow?.completed_hours) || Number(meta.rendered_hours) || 0,
+                  attendanceRate: 100,
+                  status: (meta.status as any) || 'active',
+                  enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
+                  deploymentApproved: Boolean(meta.deployment_approved),
+                  avatarUrl: meta.avatar_url || '',
+                };
+                students.push(existingStudent);
+              }
             }
           }
         }
@@ -1700,32 +1800,10 @@ async function startServer() {
     });
   });
 
-  function resolveDegreeInfo(block?: string) {
-    if (!block) return { degree: 'BS Computer Science', department: 'Department of Computer Science', college: 'College of Science' };
-    const b = block.toUpperCase();
-    if (b.includes('BSIT') || b.includes('INFORMATION TECH')) {
-      return { degree: 'BS Information Technology', department: 'Department of Information Technology', college: 'College of Science' };
-    }
-    if (b.includes('BSIS') || b.includes('INFORMATION SYS')) {
-      return { degree: 'BS Information Systems', department: 'Department of Information Systems', college: 'College of Science' };
-    }
-    if (b.includes('BIO')) {
-      return { degree: 'BS Biology', department: 'Department of Biology', college: 'College of Science' };
-    }
-    if (b.includes('CHEM')) {
-      return { degree: 'BS Chemistry', department: 'Department of Chemistry', college: 'College of Science' };
-    }
-    if (b.includes('MET')) {
-      return { degree: 'BS Meteorology', department: 'Department of Meteorology', college: 'College of Science' };
-    }
-    if (b.includes('BSCS') || b.includes('COMPUTER SCI')) {
-      return { degree: 'BS Computer Science', department: 'Department of Computer Science', college: 'College of Science' };
-    }
-    return { degree: block, department: 'College of Science', college: 'College of Science' };
-  }
+
 
   app.post('/api/auth/register', async (req: Request, res: Response) => {
-    const { fullName, email, role, buId, department, classBlock, batchId, companyId, dutyStart, dutyEnd, avatarUrl } = req.body;
+    const { fullName, email, password, role, buId, department, classBlock, batchId, companyId, dutyStart, dutyEnd, avatarUrl } = req.body;
 
     if (!fullName || !email) {
       return res.status(400).json({ error: 'Full name and email are required.' });
@@ -1754,7 +1832,7 @@ async function startServer() {
       try {
         if (targetRole === 'student') {
           const { data: coordMatch } = await supabase
-            .from('coordinator_profiles')
+            .from('coordinators')
             .select('email')
             .eq('email', cleanEmail)
             .maybeSingle();
@@ -1764,15 +1842,14 @@ async function startServer() {
             });
           }
         } else {
-          const { data: studentMatch } = await supabase
-            .from('student_profiles')
-            .select('email')
-            .eq('email', cleanEmail)
-            .maybeSingle();
-          if (studentMatch) {
-            return res.status(400).json({
-              error: 'Role conflict: This email is already registered as a Student in the database. A single user cannot hold both student and coordinator roles.',
-            });
+          if (supabaseAdmin) {
+            const { data: usersData } = await supabaseAdmin.auth.admin.listUsers();
+            const sbUser = usersData?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
+            if (sbUser && sbUser.user_metadata?.role === 'student') {
+              return res.status(400).json({
+                error: 'Role conflict: This email is already registered as a Student in the database. A single user cannot hold both student and coordinator roles.',
+              });
+            }
           }
         }
       } catch {}
@@ -1907,6 +1984,8 @@ async function startServer() {
 
     // Create or link account in Supabase Authentication > Users (auth.users)
     let authUserId: string | undefined;
+    const userPassword = password && String(password).trim() ? String(password).trim() : 'Password123!';
+
     if (supabaseAdmin) {
       try {
         const metadata = targetRole === 'coordinator'
@@ -1917,6 +1996,7 @@ async function startServer() {
               coordinator_id_number: newUser.buId,
               bu_id: newUser.buId,
               department: newUser.department,
+              avatar_url: newUser.avatarUrl || '',
             }
           : {
               full_name: newUser.fullName,
@@ -1926,11 +2006,14 @@ async function startServer() {
               bu_id: newUser.buId,
               department: newUser.department,
               class_block: newUser.classBlock,
+              degree: degreeInfo.degree,
+              enrollment_status: 'not_enrolled',
+              avatar_url: newUser.avatarUrl || '',
             };
 
         const { data: createData, error: createError } = await supabaseAdmin.auth.admin.createUser({
           email: cleanEmail,
-          password: 'Password123!',
+          password: userPassword,
           email_confirm: true,
           user_metadata: metadata,
         });
@@ -1943,6 +2026,8 @@ async function startServer() {
           if (sbUser) {
             authUserId = sbUser.id;
             await supabaseAdmin.auth.admin.updateUserById(sbUser.id, {
+              email_confirm: true,
+              password: userPassword,
               user_metadata: {
                 ...(sbUser.user_metadata || {}),
                 ...metadata,
@@ -2392,31 +2477,37 @@ async function startServer() {
 
     if (!user && supabase) {
       try {
-        const { data: cp } = await supabase.from('coordinator_profiles').select('*').or(email ? `email.eq.${email}` : `id.eq.${userId}`).maybeSingle();
+        // 1. Check coordinators table
+        const { data: cp } = await supabase.from('coordinators').select('*').or(email ? `email.eq.${email}` : `id.eq.${userId},auth_user_id.eq.${userId}`).maybeSingle();
         if (cp) {
           user = {
-            id: cp.id || cp.user_id,
+            id: cp.auth_user_id || cp.id,
             email: cp.email,
             fullName: cp.full_name,
             role: 'coordinator',
-            buId: cp.bu_id || 'FAC-2026-001',
+            buId: cp.bu_id || 'FAC-2026-CS-004',
             department: cp.department || 'Department of Computer Science',
             classBlock: '',
-            avatarUrl: cp.avatar_url || '',
+            avatarUrl: '',
           };
           users.push(user);
-        } else {
-          const { data: sp } = await supabase.from('student_profiles').select('*').or(email ? `email.eq.${email}` : `id.eq.${userId}`).maybeSingle();
-          if (sp) {
+        } else if (supabaseAdmin) {
+          // 2. Check auth.users for student or coordinator
+          const { data: uData } = await supabaseAdmin.auth.admin.listUsers();
+          const found = uData?.users?.find((u) => (email && u.email?.toLowerCase() === email) || (userId && u.id === userId));
+          if (found) {
+            const meta = found.user_metadata || {};
+            const cleanE = (found.email || '').toLowerCase().trim();
+            const assumedId = meta.bu_id || meta.student_id || extractStudentIdFromEmail(cleanE);
             user = {
-              id: sp.id || sp.user_id,
-              email: sp.email,
-              fullName: sp.full_name,
-              role: 'student',
-              buId: sp.bu_id || sp.student_id_number,
-              department: sp.department || 'College of Science',
-              classBlock: sp.class_block || '',
-              avatarUrl: sp.avatar_url || '',
+              id: found.id,
+              email: cleanE,
+              fullName: meta.full_name || cleanE.split('@')[0],
+              role: (meta.role as any) || 'student',
+              buId: assumedId,
+              department: meta.department || 'Department of Computer Science',
+              classBlock: meta.class_block || '',
+              avatarUrl: meta.avatar_url || '',
             };
             users.push(user);
           }
@@ -2741,26 +2832,25 @@ async function startServer() {
     let supabaseCoords: any[] = [];
     if (supabase) {
       try {
-        // Query dedicated coordinator_profiles table first
+        // Query coordinators table first
         const { data: coordData, error: coordErr } = await supabase
-          .from('coordinator_profiles')
-          .select('id, full_name, email, role, department, bu_id, avatar_url');
+          .from('coordinators')
+          .select('id, auth_user_id, full_name, email, department');
 
         if (!coordErr && coordData && coordData.length > 0) {
           supabaseCoords = coordData.map((d: any) => ({
-            id: d.id,
+            id: d.auth_user_id || d.id,
             fullName: d.full_name,
             email: d.email,
             department: d.department || 'Department of Computer Science',
-            buId: d.bu_id || '',
-            avatarUrl: d.avatar_url || '',
+            buId: 'FAC-2026-CS-004',
+            avatarUrl: '',
           }));
         } else {
-          // Fallback to profiles table if coordinator_profiles not yet populated
+          // Fallback to coordinator_profiles if table exists
           const { data, error } = await supabase
-            .from('profiles')
-            .select('id, full_name, email, role, department, bu_id, avatar_url')
-            .eq('role', 'coordinator');
+            .from('coordinator_profiles')
+            .select('id, full_name, email, role, department, bu_id, avatar_url');
           if (!error && data) {
             supabaseCoords = data.map((d: any) => ({
               id: d.id,
@@ -3627,26 +3717,34 @@ Respond in valid JSON format with this structure:
     }
   });
 
-  // --- Vite / Static Middleware Mounting ---
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static('dist'));
-    app.get('*', (req: Request, res: Response) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+// --- Vite / Static Middleware Mounting (Local Dev Only) ---
+if (!process.env.VERCEL) {
+  async function startLocalServer() {
+    if (process.env.NODE_ENV !== 'production') {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } else {
+      app.use(express.static('dist'));
+      app.get('*', (req: Request, res: Response) => {
+        res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      });
+    }
+
+    // Pre-load all registered users, students, and coordinators from Supabase into memory
+    await loadInitialDataFromSupabase();
+
+    const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[InternTrack] Full-stack Server running at http://0.0.0.0:${PORT}`);
     });
   }
 
-  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[InternTrack] Full-stack Server running at http://0.0.0.0:${PORT}`);
+  startLocalServer().catch((err) => {
+    console.error('[InternTrack] Server initialization error:', err);
   });
 }
 
-startServer().catch((err) => {
-  console.error('[InternTrack] Server initialization error:', err);
-});
+export default app;

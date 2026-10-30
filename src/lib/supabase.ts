@@ -540,6 +540,7 @@ export function logDbDiagnostic(
  * Synchronize user profile into Supabase
  */
 export async function syncProfileToSupabase(profile: {
+  id?: string;
   email: string;
   fullName: string;
   role: 'coordinator' | 'student';
@@ -555,10 +556,12 @@ export async function syncProfileToSupabase(profile: {
   const avatarToSave = profile.avatarUrl && profile.avatarUrl.trim() !== '' ? profile.avatarUrl.trim() : null;
 
   try {
-    const singleProfileId = isValidUuid(profile.studentIdNumber)
-      ? profile.studentIdNumber
+    const singleProfileId = (profile.id && isValidUuid(profile.id))
+      ? profile.id
+      : isValidUuid(profile.studentIdNumber)
+      ? profile.studentIdNumber!
       : isValidUuid(profile.coordinatorIdNumber)
-      ? profile.coordinatorIdNumber
+      ? profile.coordinatorIdNumber!
       : getDeterministicUuid(cleanEmail);
 
     if (profile.role === 'coordinator') {
@@ -862,7 +865,6 @@ export async function syncAttendanceToSupabase(log: {
           time_out: isoTimeOut,
           hours_rendered: Number(log.hoursRendered) || 0,
           ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
-          dtr_image_link: log.dtrImageLink || null,
         });
       } catch (attErr) {
         console.warn('Sync to attendances table note:', attErr);

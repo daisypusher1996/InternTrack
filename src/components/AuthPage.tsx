@@ -317,10 +317,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setPendingRegistrationPayload(payload);
 
     try {
-      // Trigger Supabase signUp with email in background so credentials mirror to Supabase
-      signUpWithEmail(payload).catch((err) => console.warn('Supabase auth background sync:', err));
-
-      // Direct registration & immediate activation without requiring 6-digit PIN verification
+      // Direct registration & immediate activation - sets credentials & syncs directly to Supabase
       await onRegister(payload);
       setSuccessMsg('Account created successfully! Welcome to InternTrack.');
     } catch (err: any) {

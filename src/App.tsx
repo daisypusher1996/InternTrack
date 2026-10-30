@@ -450,8 +450,11 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Registration failed');
 
-    // Sync account profile to Supabase directly
+    const createdUserId = data.user?.id;
+
+    // Sync account profile to Supabase directly with the verified Auth User UUID
     await syncProfileToSupabase({
+      id: createdUserId,
       email: regData.email,
       fullName: regData.fullName,
       role: regData.role,
@@ -459,10 +462,14 @@ export default function App() {
       department: regData.department,
       classBlock: regData.classBlock,
       avatarUrl: regData.avatarUrl,
+      studentIdNumber: createdUserId,
+      coordinatorIdNumber: createdUserId,
     }).catch((err) => console.error('Supabase profile sync failed:', err));
 
     if (regData.role === 'student') {
       await syncStudentToSupabase({
+        id: createdUserId,
+        studentIdNumber: regData.buId,
         buId: regData.buId,
         fullName: regData.fullName,
         email: regData.email,
