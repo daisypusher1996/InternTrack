@@ -1,0 +1,6 @@
+{
+  "name": "InternTrack - BU OJT Monitoring System",
+  "description": "AI-Powered Monitoring System for Individual and Group-Based Student Internships at Bicol University with Attendance Anomaly Alerts and NLP Progress Analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
