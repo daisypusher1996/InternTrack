@@ -643,9 +643,7 @@ async function syncStudentServer(student: Student) {
       if (student.coordinatorId && isValidUuid(student.coordinatorId)) {
         updatePayload.coordinator_id = student.coordinatorId;
       }
-      if (student.groupId) {
-        updatePayload.group_id = student.groupId;
-      }
+      updatePayload.group_id = isValidUuid(student.groupId) ? student.groupId : null;
       await supabase.from('students').update(updatePayload).eq('id', existingStudentRow.id);
     } else {
       let stPayload: any = {
@@ -655,7 +653,7 @@ async function syncStudentServer(student: Student) {
         required_hours: Number(student.targetHours) || 240.00,
         completed_hours: Number(student.renderedHours) || 0.00,
         coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-        group_id: student.groupId || null,
+        group_id: isValidUuid(student.groupId) ? student.groupId : null,
       };
       await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
     }
@@ -1014,6 +1012,8 @@ async function loadInitialDataFromSupabase() {
             (st) => st.groupId === g.id && !st.pendingGroupInvitation && st.enrollmentType === 'group'
           ) || groupStudents[0];
 
+          const existingMemGroup = groups.find((mg) => mg.id === g.id);
+
           const invitations: GroupMemberInvitation[] = groupStudents.map((st) => {
             if (st.id === leader?.id) {
               return {
@@ -1047,32 +1047,54 @@ async function loadInitialDataFromSupabase() {
             };
           });
 
+          // Merge any invitations already captured in memory that haven't synced their metadata yet
+          if (existingMemGroup?.invitations) {
+            for (const memInv of existingMemGroup.invitations) {
+              if (
+                !invitations.some(
+                  (i) =>
+                    i.studentId === memInv.studentId ||
+                    (memInv.studentEmail && i.studentEmail.toLowerCase() === memInv.studentEmail.toLowerCase())
+                )
+              ) {
+                invitations.push(memInv);
+              }
+            }
+          }
+
           const pendingCount = invitations.filter((i) => i.status === 'pending').length;
           const peerApprovalStatus = pendingCount === 0 ? 'all_peers_approved' : 'pending_peer_approvals';
 
           const grpObj: Group = {
             id: g.id,
-            code: `${(leader?.classBlock || 'BSCS').replace(/\s+/g, '')}-COHORT-${g.id.slice(-4)}`,
-            name: g.group_name || 'Group Cohort',
-            companyId: leader?.companyId || '',
-            companyName: leader?.companyName || '',
-            companyBranch: leader?.companyBranch || '',
-            leaderId: leader?.id || '',
-            leaderName: leader?.fullName || 'Student Leader',
+            code: existingMemGroup?.code || `${(leader?.classBlock || 'BSCS').replace(/\s+/g, '')}-COHORT-${g.id.slice(-4)}`,
+            name: g.group_name || existingMemGroup?.name || 'Group Cohort',
+            companyId: leader?.companyId || existingMemGroup?.companyId || '',
+            companyName: leader?.companyName || existingMemGroup?.companyName || '',
+            companyBranch: leader?.companyBranch || existingMemGroup?.companyBranch || '',
+            leaderId: leader?.id || existingMemGroup?.leaderId || '',
+            leaderName: leader?.fullName || existingMemGroup?.leaderName || 'Student Leader',
             academicYear: '2026-2027',
             semester: '2nd Semester',
             targetHours: 240,
-            membersCount: groupStudents.length,
+            membersCount: Math.max(groupStudents.length, invitations.length),
             members: groupStudents.filter((st) => !st.pendingGroupInvitation),
             invitations,
             peerApprovalStatus,
-            scheduledDeploymentDate: leader?.scheduledDeploymentDate,
-            coordinatorId: leader?.coordinatorId,
-            coordinatorName: leader?.coordinatorName,
-            mentorName: leader?.mentorName,
+            scheduledDeploymentDate: leader?.scheduledDeploymentDate || existingMemGroup?.scheduledDeploymentDate,
+            coordinatorId: leader?.coordinatorId || existingMemGroup?.coordinatorId,
+            coordinatorName: leader?.coordinatorName || existingMemGroup?.coordinatorName,
+            mentorName: leader?.mentorName || existingMemGroup?.mentorName,
             status: peerApprovalStatus === 'all_peers_approved' ? 'active' : 'pending',
           };
           freshGroups.push(grpObj);
+        }
+      }
+
+      // Also carry forward any in-memory groups that are newly created and awaiting Supabase async consistency
+      for (const memGroup of groups) {
+        if (!freshGroups.some((fg) => fg.id === memGroup.id)) {
+          freshGroups.push(memGroup);
         }
       }
     } catch (gErr) {
@@ -2329,8 +2351,8 @@ app.use((req, res, next) => {
         validatedPeers.push(pStudent);
       }
 
-      // Create Group Cohort
-      const groupId = `grp-${Date.now()}`;
+      // Create Group Cohort with valid RFC4122 UUID
+      const groupId = crypto.randomUUID();
       const cohortName = groupName?.trim() || `${assignedComp.name} (${student.classBlock || 'BSCS'}) Group Cohort`;
 
       const invitations: GroupMemberInvitation[] = [
@@ -2389,7 +2411,7 @@ app.use((req, res, next) => {
           await supabase.from('groups').upsert({
             id: groupId,
             group_name: cohortName,
-            batch_id: 'batch-1',
+            batch_id: isValidUuid(student.batchId) ? student.batchId : null,
           }, { onConflict: 'id' });
         } catch (gErr) {
           console.warn('Supabase groups table insert note:', gErr);
@@ -2486,20 +2508,137 @@ app.use((req, res, next) => {
     const { groupId } = req.params;
     const { studentId, accept } = req.body;
 
-    const group = groups.find((g) => g.id === groupId);
+    let group = groups.find((g) => g.id === groupId);
+    if (!group) {
+      await loadInitialDataFromSupabase();
+      group = groups.find((g) => g.id === groupId);
+    }
+
+    // Direct Supabase groups table fallback if not found in memory
+    if (!group && supabase && isValidUuid(groupId)) {
+      try {
+        const { data: gRow } = await supabase.from('groups').select('*').eq('id', groupId).maybeSingle();
+        if (gRow) {
+          const groupStudents = students.filter(
+            (s) => s.groupId === groupId || s.pendingGroupInvitation?.groupId === groupId
+          );
+          const leader = groupStudents.find(
+            (s) => s.groupId === groupId && !s.pendingGroupInvitation && s.enrollmentType === 'group'
+          ) || groupStudents[0];
+
+          group = {
+            id: gRow.id,
+            code: `${(leader?.classBlock || 'BSCS').replace(/\s+/g, '')}-COHORT-${gRow.id.slice(-4)}`,
+            name: gRow.group_name || 'Group Cohort',
+            companyId: leader?.companyId || '',
+            companyName: leader?.companyName || '',
+            companyBranch: leader?.companyBranch || '',
+            leaderId: leader?.id || '',
+            leaderName: leader?.fullName || 'Student Leader',
+            academicYear: '2026-2027',
+            semester: '2nd Semester',
+            targetHours: 240,
+            membersCount: groupStudents.length,
+            members: groupStudents.filter((s) => !s.pendingGroupInvitation),
+            invitations: groupStudents.map((s) => ({
+              studentId: s.id,
+              studentEmail: s.email,
+              studentName: s.fullName,
+              studentBuId: s.buId,
+              classBlock: s.classBlock,
+              status: s.id === leader?.id ? 'creator' : (s.pendingGroupInvitation ? 'pending' : 'accepted'),
+              respondedAt: s.pendingGroupInvitation ? undefined : new Date().toISOString(),
+            })),
+            peerApprovalStatus: groupStudents.some((s) => s.pendingGroupInvitation)
+              ? 'pending_peer_approvals'
+              : 'all_peers_approved',
+            scheduledDeploymentDate: leader?.scheduledDeploymentDate,
+            coordinatorId: leader?.coordinatorId,
+            coordinatorName: leader?.coordinatorName,
+            mentorName: leader?.mentorName,
+            status: 'pending',
+          };
+          groups.push(group);
+        }
+      } catch (gErr) {
+        console.warn('Direct group query fallback note:', gErr);
+      }
+    }
+
+    // Leader student in-memory fallback
+    if (!group) {
+      const leaderStudent = students.find(
+        (s) => s.groupId === groupId && s.enrollmentType === 'group' && !s.pendingGroupInvitation
+      );
+      if (leaderStudent) {
+        const cohortPeers = students.filter(
+          (s) => s.groupId === groupId || s.pendingGroupInvitation?.groupId === groupId
+        );
+        group = {
+          id: groupId,
+          code: `${(leaderStudent.classBlock || 'BSCS').replace(/\s+/g, '')}-COHORT-${String(groupId).slice(-4)}`,
+          name: leaderStudent.groupName || `${leaderStudent.companyName} Group Cohort`,
+          companyId: leaderStudent.companyId,
+          companyName: leaderStudent.companyName,
+          companyBranch: leaderStudent.companyBranch,
+          leaderId: leaderStudent.id,
+          leaderName: leaderStudent.fullName,
+          academicYear: '2026-2027',
+          semester: '2nd Semester',
+          targetHours: leaderStudent.targetHours || 240,
+          membersCount: cohortPeers.length,
+          members: [leaderStudent],
+          invitations: cohortPeers.map((s) => ({
+            studentId: s.id,
+            studentEmail: s.email,
+            studentName: s.fullName,
+            studentBuId: s.buId,
+            classBlock: s.classBlock,
+            status: s.id === leaderStudent.id ? 'creator' : (s.pendingGroupInvitation ? 'pending' : 'accepted'),
+            respondedAt: s.id === leaderStudent.id ? new Date().toISOString() : undefined,
+          })),
+          peerApprovalStatus: 'pending_peer_approvals',
+          scheduledDeploymentDate: leaderStudent.scheduledDeploymentDate,
+          coordinatorId: leaderStudent.coordinatorId,
+          coordinatorName: leaderStudent.coordinatorName,
+          mentorName: leaderStudent.mentorName,
+          status: 'pending',
+        };
+        groups.push(group);
+
+        if (supabase && isValidUuid(groupId)) {
+          supabase.from('groups').upsert({ id: groupId, group_name: group.name }, { onConflict: 'id' }).then();
+        }
+      }
+    }
+
     if (!group) {
       return res.status(404).json({ error: 'Group cohort record not found.' });
     }
 
     let student = await findOrLoadStudent(studentId) || findStudentRecord(studentId);
 
-    const invitation = group.invitations?.find(
+    let invitation = group.invitations?.find(
       (inv) =>
         inv.studentId === studentId ||
         (student && inv.studentId === student.id) ||
         (student && inv.studentEmail.toLowerCase() === student.email.toLowerCase()) ||
         inv.studentEmail.toLowerCase() === String(studentId).toLowerCase()
     );
+
+    // If invitation is missing but student is associated with this cohort, add them
+    if (!invitation && student) {
+      invitation = {
+        studentId: student.id,
+        studentEmail: student.email,
+        studentName: student.fullName,
+        studentBuId: student.buId,
+        classBlock: student.classBlock,
+        status: 'pending',
+      };
+      if (!group.invitations) group.invitations = [];
+      group.invitations.push(invitation);
+    }
 
     if (!invitation) {
       return res.status(404).json({ error: 'No invitation found for this student in this cohort.' });
@@ -2515,10 +2654,12 @@ app.use((req, res, next) => {
         degree: 'BS Computer Science',
         college: 'College of Science',
         classBlock: invitation.classBlock || '',
-        companyId: '',
-        companyName: '',
-        companyBranch: '',
-        mentorName: '',
+        companyId: group.companyId,
+        companyName: group.companyName,
+        companyBranch: group.companyBranch,
+        mentorName: group.mentorName || 'Unassigned',
+        coordinatorId: group.coordinatorId,
+        coordinatorName: group.coordinatorName,
         dutyStart: '08:00',
         dutyEnd: '17:00',
         dutyDays: 'Mon,Tue,Wed,Thu,Fri',
@@ -2566,6 +2707,15 @@ app.use((req, res, next) => {
           if (mStudent) {
             mStudent.enrollmentStatus = 'pending_approval';
             mStudent.pendingGroupInvitation = undefined;
+            mStudent.groupId = group.id;
+            mStudent.groupName = group.name;
+            mStudent.companyId = group.companyId;
+            mStudent.companyName = group.companyName;
+            mStudent.companyBranch = group.companyBranch;
+            mStudent.coordinatorId = group.coordinatorId;
+            mStudent.coordinatorName = group.coordinatorName;
+            mStudent.mentorName = group.mentorName || mStudent.mentorName;
+            mStudent.scheduledDeploymentDate = group.scheduledDeploymentDate || mStudent.scheduledDeploymentDate;
             await syncStudentServer(mStudent);
           }
         }
@@ -2995,10 +3145,10 @@ app.use((req, res, next) => {
     res.json(enriched);
   });
 
-  app.post('/api/groups', (req: Request, res: Response) => {
+  app.post('/api/groups', async (req: Request, res: Response) => {
     const { name, companyId, leaderName, memberIds } = req.body;
     const targetComp = companies.find((c) => c.id === companyId) || companies[0];
-    const newGroupId = `grp-${Date.now()}`;
+    const newGroupId = crypto.randomUUID();
     const code = `BU-CS-GRP-${String.fromCharCode(65 + groups.length)}`;
 
     const newGroup: Group = {
@@ -3017,6 +3167,18 @@ app.use((req, res, next) => {
     };
 
     groups.push(newGroup);
+
+    if (supabase) {
+      try {
+        await supabase.from('groups').upsert({
+          id: newGroupId,
+          group_name: newGroup.name,
+        }, { onConflict: 'id' });
+      } catch (err) {
+        console.warn('Group create supabase error:', err);
+      }
+    }
+
     res.status(201).json(newGroup);
   });
 

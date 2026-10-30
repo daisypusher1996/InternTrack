@@ -656,8 +656,26 @@ export default function App() {
       setGroups((prev) => [data.group, ...prev.filter((g) => g.id !== data.group.id)]);
     }
 
+    if (data.student) {
+      setStudents((prev) => prev.map((s) => (s.id === loggedInStudent.id ? { ...s, ...data.student } : s)));
+      setCurrentUser((prev) => {
+        if (!prev) return prev;
+        const updated = {
+          ...prev,
+          studentProfile: {
+            ...(prev.studentProfile || {}),
+            ...data.student,
+          },
+        };
+        localStorage.setItem('interntrack_current_user', JSON.stringify(updated));
+        return updated;
+      });
+    }
+
     // Direct browser Supabase sync
     await syncStudentToSupabase({
+      id: loggedInStudent.id,
+      authUserId: loggedInStudent.id,
       buId: loggedInStudent.buId,
       fullName: loggedInStudent.fullName,
       email: loggedInStudent.email,
@@ -672,6 +690,8 @@ export default function App() {
       targetHours: Number(enrollmentData.targetHours) || 240,
       scheduledDeploymentDate: enrollmentData.scheduledDeploymentDate,
       enrollmentStatus: data.student?.enrollmentStatus || (enrollmentData.enrollmentType === 'group' ? 'pending_peer_approval' : 'pending_approval'),
+      groupId: data.group?.id || data.student?.groupId,
+      groupName: data.group?.name || data.student?.groupName,
     }).catch((err) => console.error('Supabase enrollment sync failed:', err));
 
     await refreshData();
@@ -688,6 +708,50 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to respond to group cohort invitation');
+
+    if (data.group) {
+      setGroups((prev) => [data.group, ...prev.filter((g) => g.id !== data.group.id)]);
+    }
+
+    if (data.student) {
+      setStudents((prev) => prev.map((s) => (s.id === studentId ? { ...s, ...data.student } : s)));
+      setCurrentUser((prev) => {
+        if (!prev) return prev;
+        const updated = {
+          ...prev,
+          studentProfile: {
+            ...(prev.studentProfile || {}),
+            ...data.student,
+          },
+        };
+        localStorage.setItem('interntrack_current_user', JSON.stringify(updated));
+        return updated;
+      });
+
+      if (accept) {
+        await syncStudentToSupabase({
+          id: studentId,
+          authUserId: studentId,
+          buId: data.student.buId,
+          fullName: data.student.fullName,
+          email: data.student.email,
+          companyId: data.student.companyId,
+          companyName: data.student.companyName,
+          companyBranch: data.student.companyBranch,
+          mentorName: data.student.mentorName,
+          coordinatorId: data.student.coordinatorId,
+          coordinatorName: data.student.coordinatorName,
+          dutyStart: data.student.dutyStart,
+          dutyEnd: data.student.dutyEnd,
+          targetHours: Number(data.student.targetHours) || 240,
+          scheduledDeploymentDate: data.student.scheduledDeploymentDate,
+          enrollmentStatus: data.student.enrollmentStatus,
+          groupId: data.group?.id || data.student.groupId,
+          groupName: data.group?.name || data.student.groupName,
+        }).catch((err) => console.error('Supabase respond invitation sync failed:', err));
+      }
+    }
+
     await refreshData();
   };
 

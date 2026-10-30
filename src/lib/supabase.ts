@@ -779,6 +779,9 @@ export async function syncStudentToSupabase(student: {
   enrollmentStatus?: string;
   status?: string;
   avatarUrl?: string;
+  groupId?: string;
+  groupName?: string;
+  pendingGroupInvitation?: any;
 }): Promise<void> {
   if (!isSupabaseConfigured || !supabase) return;
   const cleanEmail = student.email.toLowerCase().trim();
@@ -811,9 +814,7 @@ export async function syncStudentToSupabase(student: {
       if (student.coordinatorId && isValidUuid(student.coordinatorId)) {
         updateData.coordinator_id = student.coordinatorId;
       }
-      if ((student as any).groupId) {
-        updateData.group_id = (student as any).groupId;
-      }
+      updateData.group_id = isValidUuid(student.groupId) ? student.groupId : null;
       const { error: upErr } = await supabase.from('students').update(updateData).eq('id', existingStudentRow.id);
       logDbDiagnostic('update', !upErr, 'students', { id: existingStudentRow.id }, upErr);
     } else {
@@ -824,7 +825,7 @@ export async function syncStudentToSupabase(student: {
         required_hours: Number(student.targetHours) || 240.00,
         completed_hours: Number(student.renderedHours) || 0.00,
         coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-        group_id: (student as any).groupId || null,
+        group_id: isValidUuid(student.groupId) ? student.groupId : null,
       };
       let { error: err1 } = await supabase.from('students').upsert(payload, { onConflict: 'id' });
       if (err1 && (err1.code === '23503' || String(err1.message || '').includes('foreign key constraint'))) {
@@ -863,9 +864,9 @@ export async function syncStudentToSupabase(student: {
         deployment_approved: Boolean(student.deploymentApproved),
         enrollment_status: student.enrollmentStatus || 'not_enrolled',
         status: student.status || 'active',
-        group_id: (student as any).groupId || null,
-        group_name: (student as any).groupName || null,
-        pending_group_invitation: (student as any).pendingGroupInvitation || null,
+        group_id: student.groupId || null,
+        group_name: student.groupName || null,
+        pending_group_invitation: student.pendingGroupInvitation || null,
         avatar_url: avatarToSave || '',
       },
     });

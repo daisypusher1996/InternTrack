@@ -24,7 +24,7 @@ import {
   Check,
   Loader2,
 } from 'lucide-react';
-import { Student, Company, User, CoordinatorInfo, Group } from '../types';
+import { Student, Company, User, CoordinatorInfo, Group, GroupMemberInvitation } from '../types';
 import { BUMascotWelcome } from './BUMascotWelcome';
 
 interface PeerInput {
@@ -87,8 +87,46 @@ export const StudentEnrollmentGate: React.FC<StudentEnrollmentGateProps> = ({
 
   // Find associated group if student is part of one
   const activeGroup = groups.find(
-    (g) => g.id === student.groupId || g.leaderId === student.id || (student.groupId && g.id === student.groupId)
+    (g) =>
+      (student.groupId && g.id === student.groupId) ||
+      (student.pendingGroupInvitation?.groupId && g.id === student.pendingGroupInvitation.groupId) ||
+      g.leaderId === student.id ||
+      g.invitations?.some(
+        (i) =>
+          i.studentId === student.id ||
+          (student.email && i.studentEmail?.toLowerCase() === student.email.toLowerCase())
+      )
   );
+
+  // Fallback peer members from allStudents if activeGroup.invitations is not yet populated
+  const cohortPeersFromStudents = (allStudents || []).filter(
+    (s) =>
+      s.id !== student.id &&
+      ((student.groupId && s.groupId === student.groupId) ||
+        (student.groupId && s.pendingGroupInvitation?.groupId === student.groupId))
+  );
+
+  const displayInvitations: GroupMemberInvitation[] =
+    activeGroup?.invitations && activeGroup.invitations.length > 0
+      ? activeGroup.invitations
+      : [
+          {
+            studentId: student.id,
+            studentEmail: student.email,
+            studentName: student.fullName,
+            studentBuId: student.buId,
+            classBlock: student.classBlock,
+            status: 'creator' as const,
+          },
+          ...cohortPeersFromStudents.map((p) => ({
+            studentId: p.id,
+            studentEmail: p.email,
+            studentName: p.fullName,
+            studentBuId: p.buId,
+            classBlock: p.classBlock,
+            status: (p.pendingGroupInvitation ? 'pending' : 'accepted') as any,
+          })),
+        ];
 
   // Enrollment Mode: Individual vs Group Cohort
   const [enrollmentMode, setEnrollmentMode] = useState<'individual' | 'group'>('individual');
@@ -728,8 +766,8 @@ export const StudentEnrollmentGate: React.FC<StudentEnrollmentGateProps> = ({
               </div>
 
               {/* Invited peers */}
-              {activeGroup?.invitations
-                ?.filter((inv) => inv.status !== 'creator')
+              {displayInvitations
+                .filter((inv) => inv.status !== 'creator')
                 .map((inv, idx) => {
                   const isAccepted = inv.status === 'accepted';
                   const isDeclinedPeer = inv.status === 'declined';
