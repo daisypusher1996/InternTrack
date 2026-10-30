@@ -726,14 +726,49 @@ async function syncAttendanceServer(log: AttendanceLog) {
 
     // 1. Primary: sync to attendances table in Supabase
     try {
-      await supabase.from('attendances').insert({
-        student_id: studentUuid,
-        date: toIsoDate(log.date),
-        time_in: toIsoDateTime(log.date, log.actualTimeIn),
-        time_out: toIsoDateTime(log.date, log.actualTimeOut),
-        hours_rendered: Number(log.hoursRendered) || 0,
-        ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
-      });
+      const isoDate = toIsoDate(log.date);
+      const isoTimeIn = toIsoDateTime(log.date, log.actualTimeIn);
+      const isoTimeOut = toIsoDateTime(log.date, log.actualTimeOut);
+
+      if (isoTimeOut) {
+        // Time-Out: update the existing open record for this student on this date
+        const { data: openRow } = await supabase
+          .from('attendances')
+          .select('id')
+          .eq('student_id', studentUuid)
+          .eq('date', isoDate)
+          .is('time_out', null)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (openRow?.id) {
+          await supabase.from('attendances').update({
+            time_out: isoTimeOut,
+            hours_rendered: Number(log.hoursRendered) || 0,
+            ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
+          }).eq('id', openRow.id);
+        } else {
+          await supabase.from('attendances').insert({
+            student_id: studentUuid,
+            date: isoDate,
+            time_in: isoTimeIn,
+            time_out: isoTimeOut,
+            hours_rendered: Number(log.hoursRendered) || 0,
+            ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
+          });
+        }
+      } else {
+        // Time-In: insert a new open attendance row
+        await supabase.from('attendances').insert({
+          student_id: studentUuid,
+          date: isoDate,
+          time_in: isoTimeIn,
+          time_out: null,
+          hours_rendered: Number(log.hoursRendered) || 0,
+          ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
+        });
+      }
     } catch (attErr) {
       console.warn('Supabase attendances sync note:', attErr);
     }

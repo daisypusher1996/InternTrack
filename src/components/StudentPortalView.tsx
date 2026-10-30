@@ -20,6 +20,7 @@ import {
   XCircle,
   Check,
   Download,
+  Loader2,
 } from 'lucide-react';
 import {
   Student,
@@ -31,6 +32,7 @@ import {
 import { BUMascotWelcome } from './BUMascotWelcome';
 import { CalendarVisual } from './CalendarVisual';
 import { BUAccomplishmentExportModal } from './BUAccomplishmentExportModal';
+import { useAttendanceStateMachine } from '../hooks/useAttendanceStateMachine';
 
 interface StudentPortalViewProps {
   currentUser: User;
@@ -119,11 +121,41 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
     day: 'numeric',
     year: 'numeric',
   });
-  const todayLog = attendanceLogs.find(
-    (l) => l.studentId === student.id && l.date === todayStr
-  );
-  const hasTimedIn = Boolean(todayLog && todayLog.actualTimeIn);
-  const hasTimedOut = Boolean(todayLog && todayLog.actualTimeOut);
+
+  // Strict Attendance State Machine (Validated Directly Against Supabase)
+  const {
+    todayRecords,
+    stateMachine,
+    isLoading: isAttendanceLoading,
+    isMutating: isAttendanceMutating,
+    activeAction,
+    error: stateMachineError,
+    handleTimeIn: punchTimeIn,
+    handleTimeOut: punchTimeOut,
+    dismissError: dismissAttendanceError,
+  } = useAttendanceStateMachine({
+    studentId: student.id,
+    studentName: student.fullName,
+    companyId: student.companyId,
+    companyName: student.companyName,
+    dutyStart: student.dutyStart,
+    dutyEnd: student.dutyEnd,
+  });
+
+  const formatPunchTime = (isoString?: string | null): string => {
+    if (!isoString) return '—';
+    try {
+      if (isoString.includes('T')) {
+        const d = new Date(isoString);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        }
+      }
+      return isoString.slice(0, 5);
+    } catch {
+      return String(isoString);
+    }
+  };
 
   // Filter logs & reports for this student
   const studentLogs = attendanceLogs.filter((l) => l.studentId === student.id);
@@ -159,14 +191,16 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
     });
   }
 
-  // Check if student has timed in today but has not timed out after duty end
-  if (hasTimedIn && !hasTimedOut) {
+  // Check if student has an active open shift (State B or State D) requiring Time-Out
+  const hasActiveOpenShift = stateMachine.state === 'B' || stateMachine.state === 'D';
+  if (hasActiveOpenShift) {
+    const shiftLabel = stateMachine.state === 'B' ? 'Shift 1' : 'Shift 2';
     unaccomplishedTasks.push({
       id: 'task-time-out',
       type: 'time_out',
       urgency: 'urgent',
-      title: 'Missing Duty Time-Out',
-      description: `You clocked in at ${todayLog?.actualTimeIn}. Don't forget to record your Time-Out upon shift conclusion.`,
+      title: `Missing Duty Time-Out (${shiftLabel})`,
+      description: `Your ${shiftLabel} is currently in progress. Don't forget to record your Time-Out upon shift conclusion.`,
       actionText: 'Record Time-Out Now',
       onClick: () => handleTimeOut(),
     });
@@ -176,7 +210,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
   const todayReport = studentReports.find(
     (r) => r.date === todayStr || r.date.includes(todayStr.split(',')[0])
   );
-  if (hasTimedIn && !todayReport) {
+  if (todayRecords.length > 0 && !todayReport) {
     unaccomplishedTasks.push({
       id: 'task-report',
       type: 'report',
@@ -196,30 +230,25 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
 
   const handleTimeIn = async () => {
     if (isEnrollmentPending) return;
-    setIsProcessing(true);
     setAttendanceError(null);
     try {
-      await onTimeIn(student.id, remarks || 'Student workstation time-in', dtrImageLink);
+      await punchTimeIn(remarks || 'Student workstation time-in', dtrImageLink);
       setRemarks('');
       setDtrImageLink('');
     } catch (err: any) {
       setAttendanceError(err.message || 'Failed to record time-in');
-    } finally {
-      setIsProcessing(false);
     }
   };
 
   const handleTimeOut = async () => {
-    setIsProcessing(true);
+    if (isEnrollmentPending) return;
     setAttendanceError(null);
     try {
-      await onTimeOut(student.id, remarks || 'Student workstation time-out', dtrImageLink);
+      await punchTimeOut(remarks || 'Student workstation time-out', dtrImageLink);
       setRemarks('');
       setDtrImageLink('');
     } catch (err: any) {
       setAttendanceError(err.message || 'Failed to record time-out');
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -447,10 +476,18 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
             </div>
           </div>
 
-          {attendanceError && (
+          {(attendanceError || stateMachineError) && (
             <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-xl text-red-700 dark:text-red-300 text-xs flex items-center justify-between">
-              <span>{attendanceError}</span>
-              <button onClick={() => setAttendanceError(null)} className="font-bold underline text-[11px] cursor-pointer">Dismiss</button>
+              <span>{attendanceError || stateMachineError}</span>
+              <button
+                onClick={() => {
+                  setAttendanceError(null);
+                  dismissAttendanceError();
+                }}
+                className="font-bold underline text-[11px] cursor-pointer"
+              >
+                Dismiss
+              </button>
             </div>
           )}
 
@@ -461,7 +498,6 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
               <strong className="text-slate-900 dark:text-white font-bold block">{student.companyName}</strong>
               <div className="flex items-center justify-between mt-1">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">Mentor: {student.mentorName}</span>
-
               </div>
             </div>
             <div>
@@ -475,7 +511,142 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
             </div>
           </div>
 
+          {/* Today's Shifts Verified State Machine Card (Validated Against Supabase) */}
+          <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/80 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                  Today's Verified Duty Shifts
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                    stateMachine.state === 'A'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                      : stateMachine.state === 'B'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 animate-pulse'
+                      : stateMachine.state === 'C'
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                      : stateMachine.state === 'D'
+                      ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 animate-pulse'
+                      : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                  }`}
+                >
+                  State {stateMachine.state}: {stateMachine.statusMessage}
+                </span>
+              </div>
+              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                {stateMachine.closedCount} / 2 Shifts Completed Today
+              </span>
+            </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+              {/* Shift 1 Card */}
+              <div
+                className={`p-3 rounded-lg border ${
+                  todayRecords[0]
+                    ? todayRecords[0].time_out
+                      ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
+                      : 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">
+                    Shift 1 (Morning)
+                  </span>
+                  {todayRecords[0]?.time_out ? (
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Completed
+                    </span>
+                  ) : todayRecords[0]?.time_in ? (
+                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                      <Clock className="w-3 h-3 animate-spin" /> In Progress
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400">Pending</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1 text-[11px]">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Time-In</span>
+                    <strong className="text-slate-700 dark:text-slate-300 font-mono">
+                      {formatPunchTime(todayRecords[0]?.time_in)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Time-Out</span>
+                    <strong className="text-slate-700 dark:text-slate-300 font-mono">
+                      {formatPunchTime(todayRecords[0]?.time_out)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Hours</span>
+                    <strong className="text-slate-700 dark:text-slate-300 font-mono">
+                      {todayRecords[0]?.hours_rendered
+                        ? `${Number(todayRecords[0].hours_rendered).toFixed(2)}h`
+                        : todayRecords[0]?.time_in
+                        ? 'Active'
+                        : '—'}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Shift 2 Card */}
+              <div
+                className={`p-3 rounded-lg border ${
+                  todayRecords[1]
+                    ? todayRecords[1].time_out
+                      ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800'
+                      : 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 text-[11px]">
+                    Shift 2 (Afternoon)
+                  </span>
+                  {todayRecords[1]?.time_out ? (
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Completed
+                    </span>
+                  ) : todayRecords[1]?.time_in ? (
+                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                      <Clock className="w-3 h-3 animate-spin" /> In Progress
+                    </span>
+                  ) : stateMachine.state === 'C' ? (
+                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">Ready</span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400">Locked</span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1 text-[11px]">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Time-In</span>
+                    <strong className="text-slate-700 dark:text-slate-300 font-mono">
+                      {formatPunchTime(todayRecords[1]?.time_in)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Time-Out</span>
+                    <strong className="text-slate-700 dark:text-slate-300 font-mono">
+                      {formatPunchTime(todayRecords[1]?.time_out)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Hours</span>
+                    <strong className="text-slate-700 dark:text-slate-300 font-mono">
+                      {todayRecords[1]?.hours_rendered
+                        ? `${Number(todayRecords[1].hours_rendered).toFixed(2)}h`
+                        : todayRecords[1]?.time_in
+                        ? 'Active'
+                        : '—'}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <div className="space-y-3">
             <div>
@@ -485,7 +656,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
               <input
                 type="text"
                 value={remarks}
-                disabled={isEnrollmentPending}
+                disabled={isEnrollmentPending || isAttendanceMutating}
                 onChange={(e) => setRemarks(e.target.value)}
                 placeholder="e.g. Science & Tech Center Station 3 - Cypress QA Automation"
                 className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl dark:text-white focus:ring-1 focus:ring-[#F26522] disabled:opacity-50"
@@ -499,7 +670,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
               <input
                 type="text"
                 value={dtrImageLink}
-                disabled={isEnrollmentPending}
+                disabled={isEnrollmentPending || isAttendanceMutating}
                 onChange={(e) => setDtrImageLink(e.target.value)}
                 placeholder="e.g. https://drive.google.com/file/d/12345..."
                 className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl dark:text-white focus:ring-1 focus:ring-[#F26522] disabled:opacity-50"
@@ -507,40 +678,74 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
             </div>
           </div>
 
-          {/* Punch Buttons */}
+          {/* Punch Buttons - Strict State Machine & Anti-Spam Lockout */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <button
               onClick={handleTimeIn}
-              disabled={isProcessing || hasTimedIn || isEnrollmentPending}
-              className={`py-3.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all duration-150 active:scale-95 shadow-sm cursor-pointer ${
-                isEnrollmentPending
+              disabled={isAttendanceMutating || isAttendanceLoading || isEnrollmentPending || !stateMachine.isTimeInEnabled}
+              className={`py-3.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all duration-150 shadow-sm ${
+                isEnrollmentPending || isAttendanceLoading || !stateMachine.isTimeInEnabled || isAttendanceMutating
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
-                  : hasTimedIn
-                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
-                  : 'bg-[#F26522] hover:bg-[#D94B0A] text-white hover:shadow-md'
+                  : 'bg-[#F26522] hover:bg-[#D94B0A] text-white hover:shadow-md cursor-pointer active:scale-95'
               }`}
             >
-              <LogIn className="w-4 h-4" />
-              {isEnrollmentPending
-                ? 'Time-In Locked (Pending Approval)'
-                : hasTimedIn
-                ? `Time-In Recorded (${todayLog?.actualTimeIn})`
-                : 'Record Duty Time-In'}
+              {isAttendanceMutating && activeAction === 'in' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Recording Time-In...</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-4 h-4" />
+                  <span>
+                    {isEnrollmentPending
+                      ? 'Time-In Locked (Pending Approval)'
+                      : stateMachine.state === 'A'
+                      ? 'Record Duty Time-In (Shift 1)'
+                      : stateMachine.state === 'B'
+                      ? 'Shift 1 Time-In Recorded'
+                      : stateMachine.state === 'C'
+                      ? 'Record Duty Time-In (Shift 2)'
+                      : stateMachine.state === 'D'
+                      ? 'Shift 2 Time-In Recorded'
+                      : 'Daily Maximum Reached (2 Shifts)'}
+                  </span>
+                </>
+              )}
             </button>
 
             <button
               onClick={handleTimeOut}
-              disabled={isProcessing || !hasTimedIn || hasTimedOut || isEnrollmentPending}
-              className={`py-3.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all duration-150 active:scale-95 shadow-sm cursor-pointer ${
-                !hasTimedIn || hasTimedOut || isEnrollmentPending
+              disabled={isAttendanceMutating || isAttendanceLoading || isEnrollmentPending || !stateMachine.isTimeOutEnabled}
+              className={`py-3.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all duration-150 shadow-sm ${
+                isEnrollmentPending || isAttendanceLoading || !stateMachine.isTimeOutEnabled || isAttendanceMutating
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
-                  : 'bg-[#020617] hover:bg-slate-800 text-white border border-slate-700/80 hover:shadow-md'
+                  : 'bg-[#020617] hover:bg-slate-800 text-white border border-slate-700/80 hover:shadow-md cursor-pointer active:scale-95'
               }`}
             >
-              <LogOut className="w-4 h-4" />
-              {hasTimedOut
-                ? `Time-Out Recorded (${todayLog?.actualTimeOut})`
-                : 'Record Duty Time-Out'}
+              {isAttendanceMutating && activeAction === 'out' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Recording Time-Out...</span>
+                </>
+              ) : (
+                <>
+                  <LogOut className="w-4 h-4" />
+                  <span>
+                    {isEnrollmentPending
+                      ? 'Time-Out Locked'
+                      : stateMachine.state === 'A'
+                      ? 'Record Duty Time-Out'
+                      : stateMachine.state === 'B'
+                      ? 'Record Duty Time-Out (Shift 1)'
+                      : stateMachine.state === 'C'
+                      ? 'Shift 1 Time-Out Recorded'
+                      : stateMachine.state === 'D'
+                      ? 'Record Duty Time-Out (Shift 2)'
+                      : '2 Shifts Completed Today'}
+                  </span>
+                </>
+              )}
             </button>
           </div>
         </div>

@@ -53,6 +53,7 @@ import {
   isSupabaseConfigured,
   findRoleRecords,
   mapDbStudentRecord,
+  getTodayDateString,
 } from './lib/supabase';
 
 export type AuthState =
@@ -984,8 +985,8 @@ export default function App() {
         studentName: targetStudent.fullName,
         companyId: targetStudent.companyId,
         companyName: targetStudent.companyName,
-        date: new Date().toISOString().split('T')[0],
-        actualTimeIn: new Date().toLocaleTimeString('en-GB'),
+        date: getTodayDateString(),
+        actualTimeIn: new Date().toISOString(),
         status: 'present',
         remarks: remarks || `Student Portal Live Attendance Punch (Shift ${shiftNumber || 1})`,
         dtrImageLink,
@@ -1011,8 +1012,8 @@ export default function App() {
         studentName: targetStudent.fullName,
         companyId: targetStudent.companyId,
         companyName: targetStudent.companyName,
-        date: new Date().toISOString().split('T')[0],
-        actualTimeOut: new Date().toLocaleTimeString('en-GB'),
+        date: getTodayDateString(),
+        actualTimeOut: new Date().toISOString(),
         status: 'present',
         remarks: remarks || 'Student Portal Live Attendance Punch-Out',
         dtrImageLink,

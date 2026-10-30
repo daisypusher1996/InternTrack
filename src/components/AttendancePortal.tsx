@@ -16,8 +16,10 @@ import {
   Filter,
   Info,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
 import { Student, AttendanceLog } from '../types';
+import { useAttendanceStateMachine } from '../hooks/useAttendanceStateMachine';
 
 interface AttendancePortalProps {
   students: Student[];
@@ -82,19 +84,32 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
     day: 'numeric',
     year: 'numeric',
   });
-  const currentStudentLog = validAttendanceLogs.find(
-    (l) => l.studentId === currentStudent?.id && l.date === todayStr
-  );
 
-  const hasTimedIn = Boolean(currentStudentLog && currentStudentLog.actualTimeIn);
-  const hasTimedOut = Boolean(currentStudentLog && currentStudentLog.actualTimeOut);
+  // Strict Attendance State Machine (Validated Directly Against Supabase)
+  const {
+    todayRecords,
+    stateMachine,
+    isLoading: isAttendanceLoading,
+    isMutating: isAttendanceMutating,
+    activeAction,
+    error: stateMachineError,
+    handleTimeIn: punchTimeIn,
+    handleTimeOut: punchTimeOut,
+    dismissError: dismissAttendanceError,
+  } = useAttendanceStateMachine({
+    studentId: currentStudent?.id || '',
+    studentName: currentStudent?.fullName,
+    companyId: currentStudent?.companyId,
+    companyName: currentStudent?.companyName,
+    dutyStart: currentStudent?.dutyStart,
+    dutyEnd: currentStudent?.dutyEnd,
+  });
 
   const handleTimeIn = async () => {
     if (!currentStudent) return;
-    setIsProcessing(true);
     setFeedback(null);
     try {
-      await onTimeIn(currentStudent.id, remarks || 'Workstation authenticated time-in', dtrImageLink);
+      await punchTimeIn(remarks || 'Workstation authenticated time-in', dtrImageLink);
       setFeedback({
         type: 'success',
         message: `Time-in successfully logged for ${currentStudent.fullName} at ${currentStudent.companyName}.`,
@@ -103,17 +118,14 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
       setDtrImageLink('');
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Failed to record time-in' });
-    } finally {
-      setIsProcessing(false);
     }
   };
 
   const handleTimeOut = async () => {
     if (!currentStudent) return;
-    setIsProcessing(true);
     setFeedback(null);
     try {
-      await onTimeOut(currentStudent.id, remarks || 'Workstation authenticated time-out', dtrImageLink);
+      await punchTimeOut(remarks || 'Workstation authenticated time-out', dtrImageLink);
       setFeedback({
         type: 'success',
         message: `Time-out successfully logged for ${currentStudent.fullName}. Hours credited to practicum record.`,
@@ -122,8 +134,6 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
       setDtrImageLink('');
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message || 'Failed to record time-out' });
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -409,38 +419,70 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
               </div>
             </div>
 
-            {/* Check-In / Check-Out Buttons */}
+            {/* Check-In / Check-Out Buttons - Strict State Machine & Anti-Spam Lockout */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
               <button
                 onClick={handleTimeIn}
-                disabled={isProcessing || hasTimedIn}
-                className={`py-3.5 px-4 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm cursor-pointer ${
-                  hasTimedIn
+                disabled={isAttendanceMutating || isAttendanceLoading || !stateMachine.isTimeInEnabled}
+                className={`py-3.5 px-4 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm ${
+                  isAttendanceLoading || !stateMachine.isTimeInEnabled || isAttendanceMutating
                     ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
-                    : 'bg-[#F26522] hover:bg-[#D94B0A] text-white'
+                    : 'bg-[#F26522] hover:bg-[#D94B0A] text-white cursor-pointer'
                 }`}
               >
-                <LogIn className="w-4 h-4" />
-                {hasTimedIn
-                  ? `Time-In Recorded (${currentStudentLog?.actualTimeIn})`
-                  : 'Record Duty Time-In'}
+                {isAttendanceMutating && activeAction === 'in' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Recording Time-In...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogIn className="w-4 h-4" />
+                    <span>
+                      {stateMachine.state === 'A'
+                        ? 'Record Duty Time-In (Shift 1)'
+                        : stateMachine.state === 'B'
+                        ? 'Shift 1 Time-In Recorded'
+                        : stateMachine.state === 'C'
+                        ? 'Record Duty Time-In (Shift 2)'
+                        : stateMachine.state === 'D'
+                        ? 'Shift 2 Time-In Recorded'
+                        : 'Daily Maximum Reached (2 Shifts)'}
+                    </span>
+                  </>
+                )}
               </button>
 
               <button
                 onClick={handleTimeOut}
-                disabled={isProcessing || !hasTimedIn || hasTimedOut}
-                className={`py-3.5 px-4 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm cursor-pointer ${
-                  !hasTimedIn
+                disabled={isAttendanceMutating || isAttendanceLoading || !stateMachine.isTimeOutEnabled}
+                className={`py-3.5 px-4 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-sm ${
+                  isAttendanceLoading || !stateMachine.isTimeOutEnabled || isAttendanceMutating
                     ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
-                    : hasTimedOut
-                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
-                    : 'bg-[#020617] hover:bg-slate-800 text-white border border-slate-700'
+                    : 'bg-[#020617] hover:bg-slate-800 text-white border border-slate-700 cursor-pointer'
                 }`}
               >
-                <LogOut className="w-4 h-4" />
-                {hasTimedOut
-                  ? `Time-Out Recorded (${currentStudentLog?.actualTimeOut})`
-                  : 'Record Duty Time-Out'}
+                {isAttendanceMutating && activeAction === 'out' ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Recording Time-Out...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="w-4 h-4" />
+                    <span>
+                      {stateMachine.state === 'A'
+                        ? 'Record Duty Time-Out'
+                        : stateMachine.state === 'B'
+                        ? 'Record Duty Time-Out (Shift 1)'
+                        : stateMachine.state === 'C'
+                        ? 'Shift 1 Time-Out Recorded'
+                        : stateMachine.state === 'D'
+                        ? 'Record Duty Time-Out (Shift 2)'
+                        : '2 Shifts Completed Today'}
+                    </span>
+                  </>
+                )}
               </button>
             </div>
           </div>

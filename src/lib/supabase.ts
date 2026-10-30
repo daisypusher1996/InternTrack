@@ -946,14 +946,45 @@ export async function syncAttendanceToSupabase(log: {
     // 1. Sync to attendances table (user's schema)
     if (studentUuid) {
       try {
-        await supabase.from('attendances').insert({
-          student_id: studentUuid,
-          date: isoDate,
-          time_in: isoTimeIn,
-          time_out: isoTimeOut,
-          hours_rendered: Number(log.hoursRendered) || 0,
-          ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
-        });
+        if (isoTimeOut) {
+          // Time-Out: update existing open attendance row
+          const { data: openRow } = await supabase
+            .from('attendances')
+            .select('id')
+            .eq('student_id', studentUuid)
+            .eq('date', isoDate)
+            .is('time_out', null)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (openRow?.id) {
+            await supabase.from('attendances').update({
+              time_out: isoTimeOut,
+              hours_rendered: Number(log.hoursRendered) || 0,
+              ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
+            }).eq('id', openRow.id);
+          } else {
+            await supabase.from('attendances').insert({
+              student_id: studentUuid,
+              date: isoDate,
+              time_in: isoTimeIn,
+              time_out: isoTimeOut,
+              hours_rendered: Number(log.hoursRendered) || 0,
+              ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
+            });
+          }
+        } else {
+          // Time-In: insert a new open attendance row
+          await supabase.from('attendances').insert({
+            student_id: studentUuid,
+            date: isoDate,
+            time_in: isoTimeIn,
+            time_out: null,
+            hours_rendered: Number(log.hoursRendered) || 0,
+            ai_flagged: Boolean(log.status === 'absent' || log.status === 'undertime'),
+          });
+        }
       } catch (attErr) {
         console.warn('Sync to attendances table note:', attErr);
       }
@@ -981,6 +1012,372 @@ export async function syncAttendanceToSupabase(log: {
   } catch (err) {
     console.warn('Supabase syncAttendance notice:', err);
   }
+}
+
+// ============================================================================
+// ATTENDANCE STATE MACHINE & SUPABASE SERVICE FUNCTIONS (Single Source of Truth)
+// ============================================================================
+
+export type AttendanceState = 'A' | 'B' | 'C' | 'D' | 'E';
+
+export interface TodayAttendanceRecord {
+  id: string;
+  student_id: string;
+  date: string;
+  time_in: string | null;
+  time_out: string | null;
+  hours_rendered: number;
+  ai_flagged?: boolean;
+  created_at?: string;
+  [key: string]: any;
+}
+
+export interface AttendanceStateMachine {
+  state: AttendanceState;
+  isTimeInEnabled: boolean;
+  isTimeOutEnabled: boolean;
+  activeOpenRecord: TodayAttendanceRecord | null;
+  closedCount: number;
+  openCount: number;
+  totalCount: number;
+  statusMessage: string;
+}
+
+/**
+ * Returns today's date formatted as YYYY-MM-DD in the user's local timezone
+ */
+export function getTodayDateString(d: Date = new Date()): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Pure evaluation function enforcing the 5 exact attendance states:
+ * - State A (0 records today): [Time-In] ENABLED. [Time-Out] DISABLED.
+ * - State B (1 open record - missing time_out): [Time-In] DISABLED. [Time-Out] ENABLED.
+ * - State C (1 closed record - has time_in and time_out): [Time-In] ENABLED (2nd shift). [Time-Out] DISABLED.
+ * - State D (1 closed record + 1 open record): [Time-In] DISABLED. [Time-Out] ENABLED for open record.
+ * - State E (2 closed records): [Time-In] DISABLED (Daily max reached). [Time-Out] DISABLED.
+ */
+export function evaluateAttendanceState(records: TodayAttendanceRecord[]): AttendanceStateMachine {
+  const list = records || [];
+  const openRecords = list.filter((r) => !r.time_out);
+  const closedRecords = list.filter((r) => Boolean(r.time_out));
+  const total = list.length;
+  const activeOpenRecord = openRecords[openRecords.length - 1] || null;
+
+  // State A: 0 records today
+  if (total === 0) {
+    return {
+      state: 'A',
+      isTimeInEnabled: true,
+      isTimeOutEnabled: false,
+      activeOpenRecord: null,
+      closedCount: 0,
+      openCount: 0,
+      totalCount: 0,
+      statusMessage: 'Ready to punch Shift 1 Time-In',
+    };
+  }
+
+  // State B: 1 open record (missing time_out)
+  if (total === 1 && openRecords.length === 1) {
+    return {
+      state: 'B',
+      isTimeInEnabled: false,
+      isTimeOutEnabled: true,
+      activeOpenRecord,
+      closedCount: 0,
+      openCount: 1,
+      totalCount: 1,
+      statusMessage: 'Shift 1 Active — Ready for Time-Out',
+    };
+  }
+
+  // State C: 1 closed record (has time_in and time_out)
+  if (closedRecords.length === 1 && openRecords.length === 0) {
+    return {
+      state: 'C',
+      isTimeInEnabled: true,
+      isTimeOutEnabled: false,
+      activeOpenRecord: null,
+      closedCount: 1,
+      openCount: 0,
+      totalCount: 1,
+      statusMessage: 'Shift 1 Completed — Ready to punch Shift 2 Time-In',
+    };
+  }
+
+  // State D: 1 closed record + 1 open record
+  if (closedRecords.length >= 1 && openRecords.length >= 1) {
+    return {
+      state: 'D',
+      isTimeInEnabled: false,
+      isTimeOutEnabled: true,
+      activeOpenRecord,
+      closedCount: closedRecords.length,
+      openCount: openRecords.length,
+      totalCount: total,
+      statusMessage: 'Shift 2 Active — Ready for Time-Out',
+    };
+  }
+
+  // State E: 2 closed records (or daily maximum)
+  return {
+    state: 'E',
+    isTimeInEnabled: false,
+    isTimeOutEnabled: false,
+    activeOpenRecord: null,
+    closedCount: closedRecords.length,
+    openCount: 0,
+    totalCount: total,
+    statusMessage: 'Daily Maximum Reached (2 Shifts Completed)',
+  };
+}
+
+/**
+ * Fetch ALL attendance records for the given student on today's date directly from Supabase
+ */
+export async function fetchTodayAttendanceRecords(
+  studentId: string,
+  dateStr?: string
+): Promise<{ records: TodayAttendanceRecord[]; error: Error | null }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { records: [], error: null };
+  }
+
+  const targetDate = dateStr || getTodayDateString();
+
+  try {
+    let studentUuid = isValidUuid(studentId) ? studentId : null;
+    if (!studentUuid) {
+      const { data: sRow } = await supabase
+        .from('students')
+        .select('id')
+        .or(`id.eq.${studentId},auth_user_id.eq.${studentId}`)
+        .limit(1)
+        .maybeSingle();
+      if (sRow?.id) studentUuid = sRow.id;
+    }
+
+    if (!studentUuid) {
+      return { records: [], error: null };
+    }
+
+    const { data, error } = await supabase
+      .from('attendances')
+      .select('*')
+      .eq('student_id', studentUuid)
+      .eq('date', targetDate)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return { records: (data as TodayAttendanceRecord[]) || [], error: null };
+  } catch (err: any) {
+    console.error('fetchTodayAttendanceRecords error:', err);
+    return { records: [], error: err };
+  }
+}
+
+/**
+ * Executes a Time-In mutation directly against Supabase attendances table,
+ * validated against the state machine.
+ */
+export async function punchTimeInToSupabase(params: {
+  studentId: string;
+  studentName: string;
+  companyId?: string;
+  companyName?: string;
+  dutyStart?: string;
+  dutyEnd?: string;
+  workstationIp?: string;
+  remarks?: string;
+  dtrImageLink?: string;
+}): Promise<{ records: TodayAttendanceRecord[]; record: TodayAttendanceRecord; error: Error | null }> {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const todayDate = getTodayDateString();
+  let studentUuid = isValidUuid(params.studentId) ? params.studentId : null;
+  if (!studentUuid) {
+    const { data: sRow } = await supabase
+      .from('students')
+      .select('id')
+      .or(`id.eq.${params.studentId},auth_user_id.eq.${params.studentId}`)
+      .limit(1)
+      .maybeSingle();
+    if (sRow?.id) studentUuid = sRow.id;
+  }
+
+  if (!studentUuid) {
+    throw new Error('Student account record could not be resolved in Supabase.');
+  }
+
+  // 1. Fetch current today's records and enforce strict state machine
+  const { records: currentRecords, error: fetchErr } = await fetchTodayAttendanceRecords(studentUuid, todayDate);
+  if (fetchErr) throw fetchErr;
+
+  const currentMachine = evaluateAttendanceState(currentRecords);
+  if (!currentMachine.isTimeInEnabled) {
+    if (currentMachine.state === 'E') {
+      throw new Error('Daily maximum reached: You have already completed 2 duty shifts today.');
+    }
+    throw new Error('Cannot punch Time-In: A duty shift is currently active and requires Time-Out first.');
+  }
+
+  const shiftNum = currentMachine.state === 'C' ? 2 : 1;
+  const now = new Date();
+  const timeInIso = now.toISOString();
+
+  // 2. Insert into Supabase attendances table
+  const { data: inserted, error: insertErr } = await supabase
+    .from('attendances')
+    .insert({
+      student_id: studentUuid,
+      date: todayDate,
+      time_in: timeInIso,
+      time_out: null,
+      hours_rendered: 0.00,
+      ai_flagged: false,
+    })
+    .select()
+    .single();
+
+  if (insertErr) throw insertErr;
+
+  // 3. Sync to backend API for session cache
+  try {
+    await fetch('/api/attendance/time-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId: params.studentId,
+        workstationIp: params.workstationIp,
+        remarks: params.remarks || `Student Duty Punch (Shift ${shiftNum})`,
+        dtrImageLink: params.dtrImageLink,
+        shiftNumber: shiftNum,
+      }),
+    });
+  } catch (apiErr) {
+    console.warn('Backend time-in notification note:', apiErr);
+  }
+
+  // 4. Fetch fresh records from Supabase
+  const { records: freshRecords } = await fetchTodayAttendanceRecords(studentUuid, todayDate);
+
+  return {
+    record: (inserted as TodayAttendanceRecord),
+    records: freshRecords.length > 0 ? freshRecords : [...currentRecords, inserted],
+    error: null,
+  };
+}
+
+/**
+ * Executes a Time-Out mutation directly against Supabase attendances table,
+ * closing the currently active open record.
+ */
+export async function punchTimeOutToSupabase(params: {
+  studentId: string;
+  recordId?: string;
+  studentName?: string;
+  remarks?: string;
+  dtrImageLink?: string;
+}): Promise<{ records: TodayAttendanceRecord[]; record: TodayAttendanceRecord; error: Error | null }> {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const todayDate = getTodayDateString();
+  let studentUuid = isValidUuid(params.studentId) ? params.studentId : null;
+  if (!studentUuid) {
+    const { data: sRow } = await supabase
+      .from('students')
+      .select('id')
+      .or(`id.eq.${params.studentId},auth_user_id.eq.${params.studentId}`)
+      .limit(1)
+      .maybeSingle();
+    if (sRow?.id) studentUuid = sRow.id;
+  }
+
+  if (!studentUuid) {
+    throw new Error('Student account record could not be resolved in Supabase.');
+  }
+
+  // 1. Fetch current today's records and enforce strict state machine
+  const { records: currentRecords, error: fetchErr } = await fetchTodayAttendanceRecords(studentUuid, todayDate);
+  if (fetchErr) throw fetchErr;
+
+  const currentMachine = evaluateAttendanceState(currentRecords);
+  if (!currentMachine.isTimeOutEnabled || !currentMachine.activeOpenRecord) {
+    throw new Error('Cannot punch Time-Out: No open Time-In duty record found for today.');
+  }
+
+  const targetRecord = currentMachine.activeOpenRecord;
+  const now = new Date();
+  const timeOutIso = now.toISOString();
+
+  // Calculate hours rendered
+  const timeInMs = targetRecord.time_in ? new Date(targetRecord.time_in).getTime() : now.getTime();
+  const elapsedMs = Math.max(0, now.getTime() - timeInMs);
+  const elapsedSeconds = Math.floor(elapsedMs / 1000);
+  const netSeconds = elapsedSeconds > 18000 ? elapsedSeconds - 3600 : elapsedSeconds;
+  const hoursRendered = Number(Math.max(0.01, netSeconds / 3600).toFixed(2));
+
+  // 2. Update the specific open record in Supabase attendances table
+  const { data: updated, error: updateErr } = await supabase
+    .from('attendances')
+    .update({
+      time_out: timeOutIso,
+      hours_rendered: hoursRendered,
+    })
+    .eq('id', targetRecord.id)
+    .select()
+    .single();
+
+  if (updateErr) throw updateErr;
+
+  // 3. Update student completed_hours in Supabase students table
+  try {
+    const { data: stData } = await supabase
+      .from('students')
+      .select('completed_hours')
+      .eq('id', studentUuid)
+      .maybeSingle();
+    if (stData) {
+      const newTotal = Number((Number(stData.completed_hours || 0) + hoursRendered).toFixed(2));
+      await supabase.from('students').update({ completed_hours: newTotal }).eq('id', studentUuid);
+    }
+  } catch (stErr) {
+    console.warn('Completed hours increment note:', stErr);
+  }
+
+  // 4. Sync to backend API for server state
+  try {
+    await fetch('/api/attendance/time-out', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId: params.studentId,
+        remarks: params.remarks,
+        dtrImageLink: params.dtrImageLink,
+        shiftNumber: currentMachine.state === 'D' ? 2 : 1,
+      }),
+    });
+  } catch (apiErr) {
+    console.warn('Backend time-out notification note:', apiErr);
+  }
+
+  // 5. Fetch fresh records from Supabase
+  const { records: freshRecords } = await fetchTodayAttendanceRecords(studentUuid, todayDate);
+
+  return {
+    record: (updated as TodayAttendanceRecord),
+    records: freshRecords.length > 0 ? freshRecords : currentRecords.map((r) => (r.id === targetRecord.id ? updated : r)),
+    error: null,
+  };
 }
 
 /**
