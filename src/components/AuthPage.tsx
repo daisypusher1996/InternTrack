@@ -511,16 +511,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         <div className="w-full max-w-md mx-auto my-auto space-y-6">
           {/* Header Title */}
           <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-orange-50 dark:bg-orange-950/40 text-[#F26522] border border-orange-200 dark:border-orange-900/60 text-[10px] font-bold uppercase">
-              <Shield className="w-3 h-3 text-[#F26522]" />
-              <span>
-                {viewMode === 'google-onboarding'
-                  ? 'First-Time Setup'
-                  : roleMode === 'coordinator'
-                  ? 'Coordinator Portal'
-                  : 'Student Intern Portal'}
-              </span>
-            </div>
+            {viewMode === 'google-onboarding' && (
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-orange-50 dark:bg-orange-950/40 text-[#F26522] border border-orange-200 dark:border-orange-900/60 text-[10px] font-bold uppercase">
+                <Shield className="w-3 h-3 text-[#F26522]" />
+                <span>First-Time Setup</span>
+              </div>
+            )}
 
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
               {viewMode === 'google-onboarding'
@@ -715,7 +711,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Enter account password"
+                      placeholder=""
                       className="w-full py-3 px-3.5 pr-10 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522] transition-all"
                     />
                     <button
@@ -783,7 +779,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                     required
                     value={regFullName}
                     onChange={(e) => setRegFullName(e.target.value)}
-                    placeholder="e.g. Maria Clara B. Santos"
+                    placeholder=""
                     className="w-full py-2.5 px-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                   />
                 </div>
@@ -835,7 +831,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         required
                         value={regBuId}
                         onChange={(e) => setRegBuId(e.target.value)}
-                        placeholder="FAC-2026-088"
+                        placeholder=""
                         className="w-full py-2.5 px-3 font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                       />
                     </div>
@@ -920,7 +916,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                           required
                           value={customBlockInput}
                           onChange={(e) => setCustomBlockInput(e.target.value)}
-                          placeholder="e.g. BSCS 4-Midyear or BSIT 4-Special"
+                          placeholder=""
                           className="w-full py-2.5 px-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white font-mono focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                         />
                       </div>
@@ -938,7 +934,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       required
                       value={regDepartment}
                       onChange={(e) => setRegDepartment(e.target.value)}
-                      placeholder="e.g. Department of Computer Science"
+                      placeholder=""
                       className="w-full py-2.5 px-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                     />
                   </div>
@@ -954,7 +950,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       required
                       value={regPassword}
                       onChange={(e) => setRegPassword(e.target.value)}
-                      placeholder="Enter safe password"
+                      placeholder=""
                       className="w-full py-2.5 px-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                     />
                   </div>
@@ -968,7 +964,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       required
                       value={regPasswordConfirm}
                       onChange={(e) => setRegPasswordConfirm(e.target.value)}
-                      placeholder="Re-enter password"
+                      placeholder=""
                       className="w-full py-2.5 px-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                     />
                   </div>
@@ -1100,7 +1096,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                       required
                       value={googleBuId}
                       onChange={(e) => setGoogleBuId(e.target.value)}
-                      placeholder="FAC-2026-088"
+                      placeholder=""
                       className="w-full py-2.5 px-3 font-mono bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                     />
                   </div>
@@ -1199,7 +1195,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
                         required
                         value={googleCustomBlockInput}
                         onChange={(e) => setGoogleCustomBlockInput(e.target.value)}
-                        placeholder="e.g. BSCS 4-Midyear or BSIT 4-Special"
+                        placeholder=""
                         className="w-full py-2.5 px-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs dark:text-white font-mono focus:ring-2 focus:ring-[#F26522]/50 focus:border-[#F26522]"
                       />
                     </div>

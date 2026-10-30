@@ -445,21 +445,6 @@ async function syncProfileServer(user: User) {
       } catch (cErr) {
         console.warn('Sync coordinators error:', cErr);
       }
-
-      // Secondary: sync to coordinator_profiles if table exists
-      try {
-        const coordIdNum = user.coordinatorIdNumber || user.buId || 'FAC-2026-CS-004';
-        await supabase.from('coordinator_profiles').upsert({
-          id: authUserId,
-          bu_id: coordIdNum,
-          full_name: user.fullName,
-          email: cleanEmail,
-          role: 'coordinator',
-          department: user.department || 'Department of Computer Science',
-          avatar_url: avatarToSave,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'email' });
-      } catch {}
     } else {
       // 1. Primary: sync to students table in Supabase
       try {
@@ -470,28 +455,23 @@ async function syncProfileServer(user: User) {
           required_hours: 240.00,
           completed_hours: 0.00,
         };
-        let { error: sErr } = await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
-        if (sErr && (sErr.code === '23503' || String(sErr.message || '').includes('foreign key constraint'))) {
-          delete stPayload.auth_user_id;
+        const { data: existingStudentRow } = await supabase
+          .from('students')
+          .select('id')
+          .or(`id.eq.${authUserId},auth_user_id.eq.${authUserId}`)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingStudentRow?.id) {
+          await supabase.from('students').update({
+            full_name: user.fullName,
+          }).eq('id', existingStudentRow.id);
+        } else {
           await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
         }
       } catch (sErr) {
         console.warn('Sync students error:', sErr);
       }
-
-      // Secondary: sync to student_profiles if table exists
-      try {
-        await supabase.from('student_profiles').upsert({
-          id: authUserId,
-          bu_id: user.buId,
-          full_name: user.fullName,
-          email: cleanEmail,
-          department: user.department || 'Department of Computer Science',
-          class_block: user.classBlock || null,
-          avatar_url: avatarToSave,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'email' });
-      } catch {}
     }
 
     // Update metadata in Supabase Auth
@@ -509,27 +489,134 @@ async function syncProfileServer(user: User) {
         });
       } catch {}
     }
-
-    // Optional unified profiles table if present
-    try {
-      await supabase.from('profiles').upsert(
-        {
-          id: authUserId,
-          email: cleanEmail,
-          full_name: user.fullName,
-          role: user.role,
-          bu_id: user.buId,
-          department: user.department || 'Department of Computer Science',
-          class_block: user.classBlock || null,
-          avatar_url: avatarToSave,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'email' }
-      );
-    } catch {}
   } catch (err) {
     console.warn('Supabase profile sync note:', err);
   }
+}
+
+async function findOrLoadStudent(identifier: string): Promise<Student | null> {
+  const clean = String(identifier || '').trim().toLowerCase();
+  if (!clean) return null;
+
+  // 1. In-memory students
+  let s = students.find((st) => st.id === identifier || st.email.toLowerCase() === clean);
+  if (s) return s;
+
+  // 2. Query Supabase Auth directly via supabaseAdmin
+  if (supabaseAdmin) {
+    try {
+      const { data: uData } = await supabaseAdmin.auth.admin.listUsers();
+      const authUser = uData?.users?.find(
+        (u) => u.id === identifier || (u.email || '').toLowerCase().trim() === clean
+      );
+      if (authUser && (authUser.user_metadata?.role === 'student' || !authUser.user_metadata?.role)) {
+        const meta = authUser.user_metadata || {};
+        const cleanEmail = (authUser.email || clean).toLowerCase().trim();
+        const buId = meta.bu_id || extractStudentIdFromEmail(cleanEmail);
+        const degreeInfo = resolveDegreeInfo(meta.class_block);
+
+        let sRow: any = null;
+        if (supabase) {
+          const { data: sData } = await supabase
+            .from('students')
+            .select('*')
+            .or(`id.eq.${authUser.id},auth_user_id.eq.${authUser.id}`)
+            .limit(1)
+            .maybeSingle();
+          sRow = sData;
+        }
+
+        const loadedStudent: Student = {
+          id: authUser.id,
+          buId,
+          studentIdNumber: buId,
+          fullName: meta.full_name || sRow?.full_name || cleanEmail.split('@')[0],
+          email: cleanEmail,
+          degree: meta.degree || degreeInfo.degree,
+          college: 'College of Science',
+          classBlock: meta.class_block || '',
+          batchId: sRow?.batch_id || 'batch-1',
+          enrollmentType: (sRow?.group_id || meta.group_id) ? 'group' : (meta.enrollment_type || 'individual'),
+          companyId: meta.company_id || '',
+          companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
+          companyBranch: meta.company_branch || '',
+          mentorName: meta.mentor_name || 'Unassigned',
+          coordinatorId: sRow?.coordinator_id || meta.coordinator_id || undefined,
+          coordinatorName: meta.coordinator_name || undefined,
+          coordinatorEmail: meta.coordinator_email || undefined,
+          dutyStart: meta.duty_start || '08:00',
+          dutyEnd: meta.duty_end || '17:00',
+          dutyDays: meta.duty_days || 'Mon,Tue,Wed,Thu,Fri',
+          targetHours: Number(sRow?.required_hours ?? meta.target_hours ?? 240),
+          renderedHours: Number(sRow?.completed_hours ?? meta.rendered_hours ?? 0),
+          attendanceRate: 100,
+          status: (meta.status as any) || 'active',
+          enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
+          deploymentApproved: Boolean(meta.deployment_approved),
+          avatarUrl: meta.avatar_url || '',
+          groupId: sRow?.group_id || meta.group_id || undefined,
+          groupName: meta.group_name || undefined,
+          pendingGroupInvitation: meta.pending_group_invitation || undefined,
+        };
+
+        const existingIdx = students.findIndex((st) => st.email.toLowerCase() === cleanEmail);
+        if (existingIdx >= 0) {
+          students[existingIdx] = loadedStudent;
+        } else {
+          students.push(loadedStudent);
+        }
+        return loadedStudent;
+      }
+    } catch (err) {
+      console.warn('findOrLoadStudent error:', err);
+    }
+  }
+
+  // 3. Check students table in Supabase
+  if (supabase) {
+    try {
+      const { data: sData } = await supabase
+        .from('students')
+        .select('*')
+        .or(`id.eq.${identifier},auth_user_id.eq.${identifier}`)
+        .limit(1)
+        .maybeSingle();
+      if (sData) {
+        const buId = `BU-${sData.id.slice(0, 6)}`;
+        const loadedStudent: Student = {
+          id: sData.id,
+          buId,
+          studentIdNumber: buId,
+          fullName: sData.full_name || 'Student Intern',
+          email: clean.includes('@') ? clean : `${sData.id}@bicol-u.edu.ph`,
+          degree: 'BS Computer Science',
+          college: 'College of Science',
+          classBlock: 'BSCS',
+          batchId: sData.batch_id || 'batch-1',
+          enrollmentType: sData.group_id ? 'group' : 'individual',
+          companyId: '',
+          companyName: 'Not Yet Enrolled (Pending Application)',
+          companyBranch: '',
+          mentorName: 'Unassigned',
+          dutyStart: '08:00',
+          dutyEnd: '17:00',
+          dutyDays: 'Mon,Tue,Wed,Thu,Fri',
+          targetHours: Number(sData.required_hours) || 240,
+          renderedHours: Number(sData.completed_hours) || 0,
+          attendanceRate: 100,
+          status: 'active',
+          enrollmentStatus: 'not_enrolled',
+          coordinatorId: sData.coordinator_id || undefined,
+          groupId: sData.group_id || undefined,
+          avatarUrl: '',
+        };
+        students.push(loadedStudent);
+        return loadedStudent;
+      }
+    } catch {}
+  }
+
+  return null;
 }
 
 async function syncStudentServer(student: Student) {
@@ -539,19 +626,38 @@ async function syncStudentServer(student: Student) {
   const singleProfileId = isValidUuid(student.id) ? student.id : getDeterministicUuid(cleanEmail);
   student.id = singleProfileId;
 
-  // 1. Primary: sync to students table in Supabase
+  // 1. Primary: sync to students table in Supabase (single persistent record per user)
   try {
-    let stPayload: any = {
-      id: singleProfileId,
-      auth_user_id: singleProfileId,
-      full_name: student.fullName,
-      required_hours: Number(student.targetHours) || 240.00,
-      completed_hours: Number(student.renderedHours) || 0.00,
-      coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-    };
-    let { error: sErr } = await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
-    if (sErr && (sErr.code === '23503' || String(sErr.message || '').includes('foreign key constraint'))) {
-      delete stPayload.auth_user_id;
+    const { data: existingStudentRow } = await supabase
+      .from('students')
+      .select('id')
+      .or(`id.eq.${singleProfileId},auth_user_id.eq.${singleProfileId}`)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingStudentRow?.id) {
+      const updatePayload: any = {
+        full_name: student.fullName,
+        required_hours: Number(student.targetHours) || 240.00,
+        completed_hours: Number(student.renderedHours) || 0.00,
+      };
+      if (student.coordinatorId && isValidUuid(student.coordinatorId)) {
+        updatePayload.coordinator_id = student.coordinatorId;
+      }
+      if (student.groupId) {
+        updatePayload.group_id = student.groupId;
+      }
+      await supabase.from('students').update(updatePayload).eq('id', existingStudentRow.id);
+    } else {
+      let stPayload: any = {
+        id: singleProfileId,
+        auth_user_id: singleProfileId,
+        full_name: student.fullName,
+        required_hours: Number(student.targetHours) || 240.00,
+        completed_hours: Number(student.renderedHours) || 0.00,
+        coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
+        group_id: student.groupId || null,
+      };
       await supabase.from('students').upsert(stPayload, { onConflict: 'id' });
     }
   } catch (sErr) {
@@ -583,32 +689,14 @@ async function syncStudentServer(student: Student) {
           enrollment_status: student.enrollmentStatus || 'not_enrolled',
           deployment_approved: Boolean(student.deploymentApproved),
           status: student.status || 'active',
+          group_id: student.groupId || null,
+          group_name: student.groupName || null,
+          pending_group_invitation: student.pendingGroupInvitation || null,
           avatar_url: avatarToSave || '',
         },
       });
     } catch {}
   }
-
-  // 3. Secondary: sync to student_profiles if table exists
-  try {
-    await supabase.from('student_profiles').upsert({
-      id: singleProfileId,
-      bu_id: student.buId,
-      full_name: student.fullName,
-      email: cleanEmail,
-      degree: student.degree || 'BS Computer Science',
-      class_block: student.classBlock || null,
-      company_id: student.companyId || null,
-      company_name: student.companyName || null,
-      coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
-      target_hours: student.targetHours || 240,
-      rendered_hours: student.renderedHours || 0,
-      enrollment_status: student.enrollmentStatus || 'not_enrolled',
-      status: student.status || 'active',
-      avatar_url: avatarToSave,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'email' });
-  } catch {}
 }
 
 async function syncAttendanceServer(log: AttendanceLog) {
@@ -828,13 +916,24 @@ async function loadInitialDataFromSupabase() {
       }
 
       // Add or update in students
-      const existingStudent = students.find((st) => st.email.toLowerCase() === cleanEmail);
+      const existingStudent = students.find((st) => st.email.toLowerCase() === cleanEmail || st.id === studentId);
       if (existingStudent) {
         existingStudent.id = studentId;
-        existingStudent.fullName = s.full_name || existingStudent.fullName;
+        existingStudent.fullName = s.full_name || meta.full_name || existingStudent.fullName;
         existingStudent.targetHours = Number(s.required_hours) || existingStudent.targetHours;
         existingStudent.renderedHours = Number(s.completed_hours) || existingStudent.renderedHours;
-        existingStudent.coordinatorId = s.coordinator_id || existingStudent.coordinatorId;
+        existingStudent.coordinatorId = s.coordinator_id || meta.coordinator_id || existingStudent.coordinatorId;
+        existingStudent.companyId = meta.company_id || existingStudent.companyId;
+        existingStudent.companyName = meta.company_name || existingStudent.companyName;
+        existingStudent.companyBranch = meta.company_branch || existingStudent.companyBranch;
+        existingStudent.mentorName = meta.mentor_name || existingStudent.mentorName;
+        existingStudent.enrollmentStatus = (meta.enrollment_status as any) || existingStudent.enrollmentStatus;
+        existingStudent.deploymentApproved = meta.deployment_approved !== undefined ? Boolean(meta.deployment_approved) : existingStudent.deploymentApproved;
+        existingStudent.groupId = s.group_id || meta.group_id || existingStudent.groupId;
+        existingStudent.groupName = meta.group_name || existingStudent.groupName;
+        existingStudent.enrollmentType = (s.group_id || meta.group_id) ? 'group' : (existingStudent.enrollmentType || 'individual');
+        existingStudent.pendingGroupInvitation = meta.pending_group_invitation || existingStudent.pendingGroupInvitation;
+        existingStudent.classBlock = meta.class_block || existingStudent.classBlock;
         if (matchingCoord) {
           existingStudent.coordinatorName = matchingCoord.full_name || matchingCoord.fullName;
           existingStudent.coordinatorEmail = matchingCoord.email;
@@ -844,18 +943,18 @@ async function loadInitialDataFromSupabase() {
           id: studentId,
           buId: studentIdNum,
           studentIdNumber: studentIdNum,
-          fullName: s.full_name || meta.full_name || 'Student Intern',
+          fullName: s.full_name || meta.full_name || cleanEmail.split('@')[0],
           email: cleanEmail,
           degree: meta.degree || degreeInfo.degree,
           college: 'College of Science',
           classBlock: meta.class_block || '',
           batchId: s.batch_id || 'batch-1',
-          enrollmentType: 'individual',
+          enrollmentType: (s.group_id || meta.group_id) ? 'group' : 'individual',
           companyId: meta.company_id || '',
           companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
           companyBranch: meta.company_branch || '',
           mentorName: meta.mentor_name || 'Unassigned',
-          coordinatorId: s.coordinator_id || undefined,
+          coordinatorId: s.coordinator_id || meta.coordinator_id || undefined,
           coordinatorName: matchingCoord ? (matchingCoord.full_name || matchingCoord.fullName) : undefined,
           coordinatorEmail: matchingCoord?.email || undefined,
           dutyStart: meta.duty_start || '08:00',
@@ -868,6 +967,9 @@ async function loadInitialDataFromSupabase() {
           enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
           deploymentApproved: Boolean(meta.deployment_approved),
           avatarUrl: meta.avatar_url || '',
+          groupId: s.group_id || meta.group_id || undefined,
+          groupName: meta.group_name || undefined,
+          pendingGroupInvitation: meta.pending_group_invitation || undefined,
         });
       }
     });
@@ -875,7 +977,7 @@ async function loadInitialDataFromSupabase() {
     // Also include student accounts from authUsers if not yet present
     authUsers.filter(u => u.user_metadata?.role === 'student').forEach(u => {
       const email = (u.email || '').toLowerCase().trim();
-      if (!students.some(s => s.email.toLowerCase() === email)) {
+      if (!students.some(s => s.email.toLowerCase() === email || s.id === u.id)) {
         const meta = u.user_metadata || {};
         const buId = meta.bu_id || extractStudentIdFromEmail(email);
         const degreeInfo = resolveDegreeInfo(meta.class_block);
@@ -889,24 +991,30 @@ async function loadInitialDataFromSupabase() {
           college: 'College of Science',
           classBlock: meta.class_block || '',
           batchId: 'batch-1',
-          enrollmentType: 'individual',
+          enrollmentType: meta.group_id ? 'group' : 'individual',
           companyId: meta.company_id || '',
           companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
           companyBranch: meta.company_branch || '',
           mentorName: meta.mentor_name || 'Unassigned',
+          coordinatorId: meta.coordinator_id || undefined,
+          coordinatorName: meta.coordinator_name || undefined,
+          coordinatorEmail: meta.coordinator_email || undefined,
           dutyStart: meta.duty_start || '08:00',
           dutyEnd: meta.duty_end || '17:00',
           dutyDays: meta.duty_days || 'Mon,Tue,Wed,Thu,Fri',
-          targetHours: 240,
-          renderedHours: 0,
+          targetHours: Number(meta.target_hours) || 240,
+          renderedHours: Number(meta.rendered_hours) || 0,
           attendanceRate: 100,
-          status: 'active',
+          status: (meta.status as any) || 'active',
           enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
           deploymentApproved: Boolean(meta.deployment_approved),
           avatarUrl: meta.avatar_url || '',
+          groupId: meta.group_id || undefined,
+          groupName: meta.group_name || undefined,
+          pendingGroupInvitation: meta.pending_group_invitation || undefined,
         };
         students.push(studentObj);
-        if (!users.some(us => us.email.toLowerCase() === email)) {
+        if (!users.some(us => us.email.toLowerCase() === email || us.id === u.id)) {
           users.push({
             id: u.id,
             email,
@@ -919,10 +1027,91 @@ async function loadInitialDataFromSupabase() {
             avatarUrl: meta.avatar_url || '',
           });
         }
-        // Mirror to students table
-        syncStudentServer(studentObj);
       }
     });
+
+    // 4. Load Groups from Supabase groups table and sync cohort states
+    try {
+      const { data: gData } = await supabase.from('groups').select('*');
+      if (gData && gData.length > 0) {
+        for (const g of gData) {
+          const groupStudents = students.filter(
+            (st) => st.groupId === g.id || st.pendingGroupInvitation?.groupId === g.id
+          );
+          const leader = groupStudents.find(
+            (st) => st.groupId === g.id && !st.pendingGroupInvitation && st.enrollmentType === 'group'
+          ) || groupStudents[0];
+
+          const invitations: GroupMemberInvitation[] = groupStudents.map((st) => {
+            if (st.id === leader?.id) {
+              return {
+                studentId: st.id,
+                studentEmail: st.email,
+                studentName: st.fullName,
+                studentBuId: st.buId,
+                classBlock: st.classBlock,
+                status: 'creator',
+                respondedAt: new Date().toISOString(),
+              };
+            }
+            if (st.pendingGroupInvitation) {
+              return {
+                studentId: st.id,
+                studentEmail: st.email,
+                studentName: st.fullName,
+                studentBuId: st.buId,
+                classBlock: st.classBlock,
+                status: 'pending',
+              };
+            }
+            return {
+              studentId: st.id,
+              studentEmail: st.email,
+              studentName: st.fullName,
+              studentBuId: st.buId,
+              classBlock: st.classBlock,
+              status: 'accepted',
+              respondedAt: new Date().toISOString(),
+            };
+          });
+
+          const pendingCount = invitations.filter((i) => i.status === 'pending').length;
+          const peerApprovalStatus = pendingCount === 0 ? 'all_peers_approved' : 'pending_peer_approvals';
+
+          const existingGrp = groups.find((existing) => existing.id === g.id);
+          const grpObj: Group = {
+            id: g.id,
+            code: `${(leader?.classBlock || 'BSCS').replace(/\s+/g, '')}-COHORT-${g.id.slice(-4)}`,
+            name: g.group_name || 'Group Cohort',
+            companyId: leader?.companyId || '',
+            companyName: leader?.companyName || '',
+            companyBranch: leader?.companyBranch || '',
+            leaderId: leader?.id || '',
+            leaderName: leader?.fullName || 'Student Leader',
+            academicYear: '2026-2027',
+            semester: '2nd Semester',
+            targetHours: 240,
+            membersCount: groupStudents.length,
+            members: groupStudents.filter((st) => !st.pendingGroupInvitation),
+            invitations,
+            peerApprovalStatus,
+            scheduledDeploymentDate: leader?.scheduledDeploymentDate,
+            coordinatorId: leader?.coordinatorId,
+            coordinatorName: leader?.coordinatorName,
+            mentorName: leader?.mentorName,
+            status: peerApprovalStatus === 'all_peers_approved' ? 'active' : 'pending',
+          };
+
+          if (existingGrp) {
+            Object.assign(existingGrp, grpObj);
+          } else {
+            groups.push(grpObj);
+          }
+        }
+      }
+    } catch (gErr) {
+      console.warn('Groups table load error:', gErr);
+    }
 
     // 4. Load Attendances from attendances table
     try {
@@ -2043,210 +2232,45 @@ app.use((req, res, next) => {
       });
     }
 
-    // Look for registered student in users or students
-    let matchedUser = users.find(
-      (u) => u.email.toLowerCase() === rawEmail && u.role === 'student'
-    );
-    let matchedStudent = students.find((s) => s.email.toLowerCase() === rawEmail);
+    // Look for registered student in memory or directly in Supabase Auth / students table
+    const peerStudent = await findOrLoadStudent(rawEmail);
 
-    if (!matchedUser && !matchedStudent && supabase) {
-      try {
-        const { data: sp } = await supabase.from('student_profiles').select('*').eq('email', rawEmail).maybeSingle();
-        if (sp) {
-          matchedStudent = {
-            id: sp.id,
-            buId: sp.bu_id || extractStudentIdFromEmail(rawEmail),
-            studentIdNumber: sp.bu_id || extractStudentIdFromEmail(rawEmail),
-            fullName: sp.full_name || rawEmail.split('@')[0],
-            email: rawEmail,
-            degree: sp.degree || 'BS Computer Science',
-            college: 'College of Science',
-            classBlock: sp.class_block || '',
-            companyId: '',
-            companyName: '',
-            companyBranch: '',
-            mentorName: '',
-            dutyStart: '08:00',
-            dutyEnd: '17:00',
-            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-            targetHours: 240,
-            renderedHours: 0,
-            attendanceRate: 100,
-            status: 'active',
-            enrollmentStatus: 'not_enrolled',
-            avatarUrl: sp.avatar_url || '',
-          };
-          students.push(matchedStudent);
-        } else {
-          const { data: pr } = await supabase.from('profiles').select('*').eq('email', rawEmail).maybeSingle();
-          if (pr && pr.role === 'student') {
-            matchedStudent = {
-              id: pr.id,
-              buId: pr.bu_id || extractStudentIdFromEmail(rawEmail),
-              studentIdNumber: pr.bu_id || extractStudentIdFromEmail(rawEmail),
-              fullName: pr.full_name || rawEmail.split('@')[0],
-              email: rawEmail,
-              degree: 'BS Computer Science',
-              college: pr.department || 'College of Science',
-              classBlock: pr.class_block || '',
-              companyId: '',
-              companyName: '',
-              companyBranch: '',
-              mentorName: '',
-              dutyStart: '08:00',
-              dutyEnd: '17:00',
-              dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-              targetHours: 240,
-              renderedHours: 0,
-              attendanceRate: 100,
-              status: 'active',
-              enrollmentStatus: 'not_enrolled',
-              avatarUrl: pr.avatar_url || '',
-            };
-            students.push(matchedStudent);
-          }
-        }
-      } catch (err) {
-        console.warn('Supabase peer validation error:', err);
-      }
+    if (!peerStudent) {
+      return res.json({
+        valid: false,
+        error: `No registered student found for "${rawEmail}". Peers must create their InternTrack account before they can be added to a group cohort.`,
+      });
     }
 
-    // If still not matched, synthesize student if it's a valid email format
-    if (!matchedUser && !matchedStudent) {
-      if (rawEmail.includes('@')) {
-        const emailParts = rawEmail.split('@')[0].replace(/[._-]/g, ' ');
-        const formattedName = emailParts
-          .split(' ')
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(' ');
-        const studentUuid = isValidUuid(rawEmail) ? rawEmail : getDeterministicUuid(rawEmail);
-        matchedStudent = {
-          id: studentUuid,
-          buId: extractStudentIdFromEmail(rawEmail) || `BU-${Date.now().toString().slice(-5)}`,
-          studentIdNumber: extractStudentIdFromEmail(rawEmail) || `BU-${Date.now().toString().slice(-5)}`,
-          fullName: formattedName || 'Student Intern',
-          email: rawEmail,
-          degree: 'BS Computer Science',
-          college: 'College of Science',
-          classBlock: '',
-          companyId: '',
-          companyName: '',
-          companyBranch: '',
-          mentorName: '',
-          dutyStart: '08:00',
-          dutyEnd: '17:00',
-          dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-          targetHours: 240,
-          renderedHours: 0,
-          attendanceRate: 100,
-          status: 'active',
-          enrollmentStatus: 'not_enrolled',
-          avatarUrl: '',
-        };
-        students.push(matchedStudent);
-      } else {
-        return res.json({
-          valid: false,
-          error: 'Please enter a valid student email address.',
-        });
-      }
-    }
-
-    const studentInfo = matchedStudent || {
-      id: matchedUser?.id || '',
-      fullName: matchedUser?.fullName || 'Student Intern',
-      email: rawEmail,
-      buId: matchedUser?.buId || '',
-      classBlock: matchedUser?.classBlock || '',
-      enrollmentStatus: 'not_enrolled',
-    };
-
-    if (currentStudentId && studentInfo.id === currentStudentId) {
+    if (currentStudentId && peerStudent.id === currentStudentId) {
       return res.json({
         valid: false,
         error: 'You are already the cohort creator (cannot add yourself as a peer).',
       });
     }
 
-    if (matchedStudent?.enrollmentStatus === 'approved') {
+    if (peerStudent.enrollmentStatus === 'approved') {
       return res.json({
         valid: false,
-        error: `${studentInfo.fullName} is already officially enrolled and approved in another HTE.`,
+        error: `${peerStudent.fullName} is already officially enrolled and approved in another HTE.`,
       });
     }
 
     return res.json({
       valid: true,
       student: {
-        id: studentInfo.id,
-        fullName: studentInfo.fullName,
-        email: studentInfo.email,
-        buId: studentInfo.buId,
-        classBlock: studentInfo.classBlock,
+        id: peerStudent.id,
+        fullName: peerStudent.fullName,
+        email: peerStudent.email,
+        buId: peerStudent.buId,
+        classBlock: peerStudent.classBlock,
       },
     });
   });
 
   // Student submits enrollment application after freshly creating account (Individual or Group Cohort)
   app.post('/api/students/:id/submit-enrollment', async (req: Request, res: Response) => {
-    let student = findStudentRecord(req.params.id);
-    if (!student && supabase) {
-      try {
-        const { data: sp } = await supabase.from('student_profiles').select('*').eq('id', req.params.id).maybeSingle();
-        if (sp) {
-          student = {
-            id: sp.id,
-            buId: sp.bu_id || '',
-            studentIdNumber: sp.bu_id || '',
-            fullName: sp.full_name || 'Student Intern',
-            email: sp.email || '',
-            degree: sp.degree || 'BS Computer Science',
-            college: 'College of Science',
-            classBlock: sp.class_block || '',
-            companyId: '',
-            companyName: '',
-            companyBranch: '',
-            mentorName: '',
-            dutyStart: '08:00',
-            dutyEnd: '17:00',
-            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-            targetHours: 240,
-            renderedHours: 0,
-            attendanceRate: 100,
-            status: 'active',
-            enrollmentStatus: 'not_enrolled',
-          };
-          students.push(student);
-        } else {
-          const { data: pr } = await supabase.from('profiles').select('*').eq('id', req.params.id).maybeSingle();
-          if (pr) {
-            student = {
-              id: pr.id,
-              buId: pr.bu_id || '',
-              studentIdNumber: pr.bu_id || '',
-              fullName: pr.full_name || 'Student Intern',
-              email: pr.email || '',
-              degree: 'BS Computer Science',
-              college: pr.department || 'College of Science',
-              classBlock: pr.class_block || '',
-              companyId: '',
-              companyName: '',
-              companyBranch: '',
-              mentorName: '',
-              dutyStart: '08:00',
-              dutyEnd: '17:00',
-              dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-              targetHours: 240,
-              renderedHours: 0,
-              attendanceRate: 100,
-              status: 'active',
-              enrollmentStatus: 'not_enrolled',
-            };
-            students.push(student);
-          }
-        }
-      } catch (err) {}
-    }
+    let student = await findOrLoadStudent(req.params.id) || findStudentRecord(req.params.id);
 
     if (!student) {
       student = {
@@ -2305,134 +2329,13 @@ app.use((req, res, next) => {
       // Validate that all peer student accounts exist
       const validatedPeers: Student[] = [];
       for (const pEmail of cleanPeerEmails) {
-        let pStudent = students.find((s) => s.email.toLowerCase() === pEmail);
+        const pStudent = await findOrLoadStudent(pEmail);
         if (!pStudent) {
-          const pUser = users.find((u) => u.email.toLowerCase() === pEmail && u.role === 'student');
-          if (pUser) {
-            pStudent = {
-              id: pUser.id,
-              buId: pUser.buId,
-              studentIdNumber: pUser.studentIdNumber || pUser.buId,
-              fullName: pUser.fullName,
-              email: pUser.email,
-              degree: 'BS Computer Science',
-              college: 'College of Science',
-              classBlock: pUser.classBlock || student!.classBlock,
-              companyId: '',
-              companyName: '',
-              companyBranch: '',
-              mentorName: '',
-              dutyStart: dutyStart || '08:00',
-              dutyEnd: dutyEnd || '17:00',
-              dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-              targetHours: Number(targetHours) || 240,
-              renderedHours: 0,
-              attendanceRate: 100,
-              status: 'active',
-              enrollmentStatus: 'not_enrolled',
-              avatarUrl: pUser.avatarUrl || '',
-            };
-            students.push(pStudent);
-          }
+          return res.status(400).json({
+            error: `Peer student "${pEmail}" does not have an active InternTrack account yet. Please ask them to register first before forming a cohort.`,
+          });
         }
-
-        // If still not found, check Supabase
-        if (!pStudent && supabase) {
-          try {
-            const { data: sp } = await supabase.from('student_profiles').select('*').eq('email', pEmail).maybeSingle();
-            if (sp) {
-              pStudent = {
-                id: sp.id,
-                buId: sp.bu_id || '',
-                studentIdNumber: sp.bu_id || '',
-                fullName: sp.full_name || 'Student Intern',
-                email: sp.email || pEmail,
-                degree: sp.degree || 'BS Computer Science',
-                college: 'College of Science',
-                classBlock: sp.class_block || student!.classBlock,
-                companyId: '',
-                companyName: '',
-                companyBranch: '',
-                mentorName: '',
-                dutyStart: dutyStart || '08:00',
-                dutyEnd: dutyEnd || '17:00',
-                dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-                targetHours: Number(targetHours) || 240,
-                renderedHours: 0,
-                attendanceRate: 100,
-                status: 'active',
-                enrollmentStatus: 'not_enrolled',
-                avatarUrl: sp.avatar_url || '',
-              };
-              students.push(pStudent);
-            } else {
-              const { data: pr } = await supabase.from('profiles').select('*').eq('email', pEmail).maybeSingle();
-              if (pr && pr.role === 'student') {
-                pStudent = {
-                  id: pr.id,
-                  buId: pr.bu_id || '',
-                  studentIdNumber: pr.bu_id || '',
-                  fullName: pr.full_name || 'Student Intern',
-                  email: pr.email || pEmail,
-                  degree: 'BS Computer Science',
-                  college: pr.department || 'College of Science',
-                  classBlock: pr.class_block || student!.classBlock,
-                  companyId: '',
-                  companyName: '',
-                  companyBranch: '',
-                  mentorName: '',
-                  dutyStart: dutyStart || '08:00',
-                  dutyEnd: dutyEnd || '17:00',
-                  dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-                  targetHours: Number(targetHours) || 240,
-                  renderedHours: 0,
-                  attendanceRate: 100,
-                  status: 'active',
-                  enrollmentStatus: 'not_enrolled',
-                  avatarUrl: pr.avatar_url || '',
-                };
-                students.push(pStudent);
-              }
-            }
-          } catch (err) {}
-        }
-
-        // If not in database yet, create provisional student record for this email so they receive the invitation
-        if (!pStudent) {
-          const emailPrefix = pEmail.split('@')[0].replace(/[._-]/g, ' ');
-          const formattedName = emailPrefix
-            .split(' ')
-            .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
-            .join(' ');
-          const generatedId = isValidUuid(pEmail) ? pEmail : getDeterministicUuid(pEmail);
-          pStudent = {
-            id: generatedId,
-            buId: extractStudentIdFromEmail(pEmail) || `BU-${Date.now().toString().slice(-5)}`,
-            studentIdNumber: extractStudentIdFromEmail(pEmail) || `BU-${Date.now().toString().slice(-5)}`,
-            fullName: formattedName || 'Student Intern',
-            email: pEmail,
-            degree: 'BS Computer Science',
-            college: 'College of Science',
-            classBlock: student.classBlock || 'BSCS',
-            companyId: '',
-            companyName: '',
-            companyBranch: '',
-            mentorName: '',
-            dutyStart: dutyStart || '08:00',
-            dutyEnd: dutyEnd || '17:00',
-            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-            targetHours: Number(targetHours) || 240,
-            renderedHours: 0,
-            attendanceRate: 100,
-            status: 'active',
-            enrollmentStatus: 'not_enrolled',
-            avatarUrl: '',
-          };
-          students.push(pStudent);
-        }
-        if (pStudent) {
-          validatedPeers.push(pStudent);
-        }
+        validatedPeers.push(pStudent);
       }
 
       // Create Group Cohort
@@ -2481,7 +2384,26 @@ app.use((req, res, next) => {
         mentorName: mentorName || assignedComp.contactPerson,
         status: 'pending',
       };
-      groups.push(newGroup);
+
+      const existingGrpIdx = groups.findIndex((g) => g.id === groupId);
+      if (existingGrpIdx >= 0) {
+        groups[existingGrpIdx] = newGroup;
+      } else {
+        groups.push(newGroup);
+      }
+
+      // Persist to Supabase groups table
+      if (supabase) {
+        try {
+          await supabase.from('groups').upsert({
+            id: groupId,
+            group_name: cohortName,
+            batch_id: 'batch-1',
+          }, { onConflict: 'id' });
+        } catch (gErr) {
+          console.warn('Supabase groups table insert note:', gErr);
+        }
+      }
 
       // Set creator status: pending_peer_approval
       student.enrollmentType = 'group';
@@ -2518,6 +2440,16 @@ app.use((req, res, next) => {
           mentorName: mentorName || assignedComp.contactPerson,
           invitedAt: new Date().toISOString(),
         };
+        peer.groupId = groupId;
+        peer.groupName = cohortName;
+        peer.companyId = assignedComp.id;
+        peer.companyName = assignedComp.name;
+        peer.companyBranch = companyBranch || assignedComp.branch || assignedComp.address;
+        peer.coordinatorId = coordinatorId || student.coordinatorId;
+        peer.coordinatorName = coordinatorName || student.coordinatorName;
+        peer.mentorName = mentorName || assignedComp.contactPerson;
+        if (scheduledDeploymentDate) peer.scheduledDeploymentDate = scheduledDeploymentDate;
+
         await syncStudentServer(peer);
       }
 
@@ -2568,37 +2500,7 @@ app.use((req, res, next) => {
       return res.status(404).json({ error: 'Group cohort record not found.' });
     }
 
-    let student = findStudentRecord(studentId);
-    if (!student && supabase) {
-      try {
-        const { data: sp } = await supabase.from('student_profiles').select('*').eq('id', studentId).maybeSingle();
-        if (sp) {
-          student = {
-            id: sp.id,
-            buId: sp.bu_id || '',
-            studentIdNumber: sp.bu_id || '',
-            fullName: sp.full_name || 'Student Intern',
-            email: sp.email || '',
-            degree: sp.degree || 'BS Computer Science',
-            college: 'College of Science',
-            classBlock: sp.class_block || '',
-            companyId: '',
-            companyName: '',
-            companyBranch: '',
-            mentorName: '',
-            dutyStart: '08:00',
-            dutyEnd: '17:00',
-            dutyDays: 'Mon,Tue,Wed,Thu,Fri',
-            targetHours: 240,
-            renderedHours: 0,
-            attendanceRate: 100,
-            status: 'active',
-            enrollmentStatus: 'not_enrolled',
-          };
-          students.push(student);
-        }
-      } catch {}
-    }
+    let student = await findOrLoadStudent(studentId) || findStudentRecord(studentId);
 
     const invitation = group.invitations?.find(
       (inv) =>
@@ -2669,9 +2571,10 @@ app.use((req, res, next) => {
         group.status = 'active';
 
         for (const inv of group.invitations || []) {
-          const mStudent = students.find((s) => s.id === inv.studentId || s.email.toLowerCase() === inv.studentEmail.toLowerCase());
+          const mStudent = await findOrLoadStudent(inv.studentId) || students.find((s) => s.id === inv.studentId || s.email.toLowerCase() === inv.studentEmail.toLowerCase());
           if (mStudent) {
             mStudent.enrollmentStatus = 'pending_approval';
+            mStudent.pendingGroupInvitation = undefined;
             await syncStudentServer(mStudent);
           }
         }
@@ -2695,6 +2598,7 @@ app.use((req, res, next) => {
       student.pendingGroupInvitation = undefined;
       student.groupId = undefined;
       student.groupName = undefined;
+      student.enrollmentType = 'individual';
       student.enrollmentStatus = 'not_enrolled';
 
       await syncStudentServer(student);
@@ -2710,7 +2614,10 @@ app.use((req, res, next) => {
 
   // Student cancels or withdraws enrollment application
   app.post('/api/students/:id/cancel-enrollment', async (req: Request, res: Response) => {
-    let student = findStudentRecord(req.params.id);
+    let student = await findOrLoadStudent(req.params.id) || findStudentRecord(req.params.id);
+    if (!student) {
+      return res.status(404).json({ error: 'Student record not found.' });
+    }
 
     // If this student was the creator of a pending group cohort, dismantle the cohort
     if (student.enrollmentType === 'group' && student.groupId) {
@@ -3077,7 +2984,8 @@ app.use((req, res, next) => {
   });
 
   // Groups
-  app.get('/api/groups', (req: Request, res: Response) => {
+  app.get('/api/groups', async (req: Request, res: Response) => {
+    await loadInitialDataFromSupabase();
     // augment groups with member list
     const enriched = groups.map((g) => {
       const groupStudents = students.filter((s) => s.groupId === g.id);
@@ -3284,19 +3192,45 @@ app.use((req, res, next) => {
 
   // Coordinator Approval / Decline of Student Enrollment & HTE Deployment
   app.post('/api/students/:id/approve-enrollment', async (req: Request, res: Response) => {
-    const student = findStudentRecord(req.params.id);
+    const student = await findOrLoadStudent(req.params.id) || findStudentRecord(req.params.id);
+    if (!student) {
+      return res.status(404).json({ error: 'Student record not found.' });
+    }
 
-    student.enrollmentStatus = 'approved';
-    student.deploymentApproved = true;
-    student.deploymentApprovedAt = new Date().toLocaleDateString('en-US', {
+    const approvalDate = new Date().toLocaleDateString('en-US', {
       month: 'long',
       day: 'numeric',
       year: 'numeric',
     });
+
+    student.enrollmentStatus = 'approved';
+    student.deploymentApproved = true;
+    student.deploymentApprovedAt = approvalDate;
     student.enrollmentDeclinedReason = undefined;
 
-    // Immediately mirror to Supabase student_profiles
+    // Immediately mirror to Supabase
     await syncStudentServer(student);
+
+    // If part of a group cohort, also approve all group cohort members
+    if (student.groupId) {
+      const grp = groups.find((g) => g.id === student.groupId);
+      if (grp) {
+        grp.status = 'active';
+        grp.peerApprovalStatus = 'all_peers_approved';
+        for (const inv of grp.invitations || []) {
+          if (inv.studentId !== student.id) {
+            const m = await findOrLoadStudent(inv.studentId) || students.find((s) => s.id === inv.studentId);
+            if (m) {
+              m.enrollmentStatus = 'approved';
+              m.deploymentApproved = true;
+              m.deploymentApprovedAt = approvalDate;
+              m.enrollmentDeclinedReason = undefined;
+              await syncStudentServer(m);
+            }
+          }
+        }
+      }
+    }
 
     res.json({
       success: true,
@@ -3306,14 +3240,17 @@ app.use((req, res, next) => {
   });
 
   app.post('/api/students/:id/decline-enrollment', async (req: Request, res: Response) => {
-    const student = findStudentRecord(req.params.id);
+    const student = await findOrLoadStudent(req.params.id) || findStudentRecord(req.params.id);
+    if (!student) {
+      return res.status(404).json({ error: 'Student record not found.' });
+    }
 
     const { reason } = req.body;
     student.enrollmentStatus = 'declined';
     student.deploymentApproved = false;
     student.enrollmentDeclinedReason = reason || 'Enrollment declined by practicum coordinator.';
 
-    // Immediately mirror to Supabase student_profiles
+    // Immediately mirror to Supabase
     await syncStudentServer(student);
 
     res.json({

@@ -559,69 +559,66 @@ export async function findRoleRecords(
   if (uid) coordFilters.push(`auth_user_id.eq.${uid}`, `id.eq.${uid}`);
   if (cleanEmail) coordFilters.push(`email.eq.${cleanEmail}`);
 
-  const [coordRes, studentRes, studentProfileRes] = await Promise.all([
+  const [coordRes, studentRes] = await Promise.all([
     coordFilters.length
       ? supabase.from('coordinators').select('*').or(coordFilters.join(',')).limit(1)
       : Promise.resolve({ data: null, error: null } as any),
     uid
       ? supabase.from('students').select('*').or(`auth_user_id.eq.${uid},id.eq.${uid}`).limit(1)
       : Promise.resolve({ data: null, error: null } as any),
-    cleanEmail
-      ? supabase.from('student_profiles').select('*').eq('email', cleanEmail).limit(1)
-      : Promise.resolve({ data: null, error: null } as any),
   ]);
 
   if (coordRes.error) console.warn('[ROLE LOOKUP] coordinators query error:', coordRes.error);
   if (studentRes.error) console.warn('[ROLE LOOKUP] students query error:', studentRes.error);
-  if (studentProfileRes.error && studentProfileRes.error.code !== 'PGRST205') {
-    console.warn('[ROLE LOOKUP] student_profiles query error:', studentProfileRes.error);
-  }
 
   return {
     coordinator: coordRes.data && coordRes.data.length > 0 ? coordRes.data[0] : null,
     student: studentRes.data && studentRes.data.length > 0 ? studentRes.data[0] : null,
-    studentProfile:
-      studentProfileRes.data && studentProfileRes.data.length > 0 ? studentProfileRes.data[0] : null,
+    studentProfile: null,
   };
 }
 
 /**
  * Map raw Supabase `students` + `student_profiles` rows into the app's camelCase Student shape.
  */
-export function mapDbStudentRecord(studentRow: any, profileRow: any, email: string): any {
+export function mapDbStudentRecord(studentRow: any, profileRow: any, email: string, meta?: any): any {
   const s = studentRow || {};
   const p = profileRow || {};
-  const cleanEmail = (p.email || email || '').toLowerCase().trim();
+  const m = meta || {};
+  const cleanEmail = (p.email || m.email || email || '').toLowerCase().trim();
   return {
-    id: s.id || p.id,
-    buId: p.bu_id || p.student_id_number || extractStudentIdFromEmail(cleanEmail),
-    studentIdNumber: p.student_id_number || p.bu_id || undefined,
-    fullName: p.full_name || s.full_name || cleanEmail.split('@')[0],
+    id: s.id || p.id || m.id,
+    buId: p.bu_id || m.bu_id || p.student_id_number || extractStudentIdFromEmail(cleanEmail),
+    studentIdNumber: p.student_id_number || m.bu_id || p.bu_id || undefined,
+    fullName: p.full_name || m.full_name || s.full_name || cleanEmail.split('@')[0],
     email: cleanEmail,
-    degree: p.degree || '',
-    college: p.college || '',
-    classBlock: p.class_block || undefined,
-    batchId: p.batch_id || undefined,
-    enrollmentType: 'individual',
-    companyId: p.company_id || '',
-    companyName: p.company_name || 'Not Yet Enrolled (Pending Application)',
-    companyBranch: p.company_branch || undefined,
-    mentorName: p.mentor_name || 'Unassigned',
-    coordinatorId: p.coordinator_id || undefined,
-    coordinatorName: p.coordinator_name || undefined,
-    coordinatorEmail: p.coordinator_email || undefined,
-    dutyStart: p.duty_start || '',
-    dutyEnd: p.duty_end || '',
-    dutyDays: p.duty_days || 'Mon,Tue,Wed,Thu,Fri',
-    targetHours: Number(p.target_hours ?? s.required_hours ?? 240),
-    renderedHours: Number(p.rendered_hours ?? s.completed_hours ?? 0),
+    degree: p.degree || m.degree || 'BS Computer Science',
+    college: p.college || m.department || 'College of Science',
+    classBlock: p.class_block || m.class_block || undefined,
+    batchId: p.batch_id || m.batch_id || 'batch-1',
+    enrollmentType: (m.group_id || s.group_id) ? 'group' : (m.enrollment_type || 'individual'),
+    companyId: m.company_id || p.company_id || '',
+    companyName: m.company_name || p.company_name || 'Not Yet Enrolled (Pending Application)',
+    companyBranch: m.company_branch || p.company_branch || undefined,
+    mentorName: m.mentor_name || p.mentor_name || 'Unassigned',
+    coordinatorId: s.coordinator_id || m.coordinator_id || p.coordinator_id || undefined,
+    coordinatorName: m.coordinator_name || p.coordinator_name || undefined,
+    coordinatorEmail: m.coordinator_email || p.coordinator_email || undefined,
+    dutyStart: m.duty_start || p.duty_start || '08:00',
+    dutyEnd: m.duty_end || p.duty_end || '17:00',
+    dutyDays: m.duty_days || p.duty_days || 'Mon,Tue,Wed,Thu,Fri',
+    targetHours: Number(s.required_hours ?? m.target_hours ?? p.target_hours ?? 240),
+    renderedHours: Number(s.completed_hours ?? m.rendered_hours ?? p.rendered_hours ?? 0),
     attendanceRate: Number(p.attendance_rate ?? 100),
-    status: p.status || 'active',
-    enrollmentStatus: p.enrollment_status || 'not_enrolled',
-    scheduledDeploymentDate: p.scheduled_deployment_date || undefined,
-    deploymentApproved: Boolean(p.deployment_approved),
+    status: m.status || p.status || 'active',
+    enrollmentStatus: m.enrollment_status || p.enrollment_status || 'not_enrolled',
+    scheduledDeploymentDate: m.scheduled_deployment_date || p.scheduled_deployment_date || undefined,
+    deploymentApproved: Boolean(m.deployment_approved || p.deployment_approved),
     isArchived: Boolean(p.is_archived),
-    avatarUrl: p.avatar_url || '',
+    avatarUrl: m.avatar_url || p.avatar_url || '',
+    groupId: s.group_id || m.group_id || undefined,
+    groupName: m.group_name || undefined,
+    pendingGroupInvitation: m.pending_group_invitation || undefined,
   };
 }
 
@@ -716,21 +713,6 @@ export async function syncProfileToSupabase(profile: {
     if (coordErr) {
       throw new Error(`Could not save coordinator account to Supabase: ${coordErr.message}`);
     }
-
-    // 2. SECONDARY: coordinator_profiles (optional table)
-    const coordIdNum = profile.coordinatorIdNumber || profile.buId;
-    const cpPayload: any = {
-      id: singleProfileId,
-      bu_id: coordIdNum,
-      full_name: profile.fullName,
-      email: cleanEmail,
-      role: 'coordinator',
-      department: profile.department || 'Department of Computer Science',
-      avatar_url: avatarToSave,
-      updated_at: new Date().toISOString(),
-    };
-    const { error: cpErr } = await supabase.from('coordinator_profiles').upsert(cpPayload, { onConflict: 'email' });
-    logDbDiagnostic('upsert', !cpErr, 'coordinator_profiles', { email: cleanEmail }, cpErr);
   } else {
     // 1. PRIMARY: students table (linked to auth.users via auth_user_id)
     const studentPayload: any = {
@@ -750,39 +732,23 @@ export async function syncProfileToSupabase(profile: {
     if (sErr) {
       throw new Error(`Could not save student account to Supabase: ${sErr.message}`);
     }
-
-    // 2. student_profiles (holds email + institutional details)
-    const studentIdNum = profile.studentIdNumber || profile.buId;
-    const spPayload: any = {
-      id: singleProfileId,
-      bu_id: studentIdNum,
-      full_name: profile.fullName,
-      email: cleanEmail,
-      department: profile.department || 'Department of Computer Science',
-      class_block: profile.classBlock || null,
-      avatar_url: avatarToSave,
-      updated_at: new Date().toISOString(),
-    };
-    const { error: spErr } = await supabase.from('student_profiles').upsert(spPayload, { onConflict: 'email' });
-    logDbDiagnostic('upsert', !spErr, 'student_profiles', { email: cleanEmail }, spErr);
   }
 
-  // 3. Keep profiles table updated (optional)
-  const { error: pErr } = await supabase.from('profiles').upsert(
-    {
-      id: singleProfileId,
-      email: cleanEmail,
-      full_name: profile.fullName,
-      role: profile.role,
-      bu_id: profile.buId,
-      department: profile.department || 'Department of Computer Science',
-      class_block: profile.classBlock || null,
-      avatar_url: avatarToSave,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'email' }
-  );
-  logDbDiagnostic('upsert', !pErr, 'profiles', { email: cleanEmail }, pErr);
+  // 2. Persist rich metadata directly to Supabase Auth user
+  try {
+    await supabase.auth.updateUser({
+      data: {
+        role: profile.role,
+        full_name: profile.fullName,
+        bu_id: profile.buId,
+        department: profile.department || 'Department of Computer Science',
+        class_block: profile.classBlock || '',
+        avatar_url: avatarToSave || '',
+      },
+    });
+  } catch (metaErr) {
+    console.warn('Could not update user metadata:', metaErr);
+  }
 }
 
 /**
@@ -836,23 +802,19 @@ export async function syncStudentToSupabase(student: {
       .limit(1)
       .maybeSingle();
 
-    let insErr: any = null;
     if (existingStudentRow?.id) {
-      let { error: upErr } = await supabase.from('students').update({
+      const updateData: any = {
         full_name: student.fullName,
         required_hours: Number(student.targetHours) || 240.00,
         completed_hours: Number(student.renderedHours) || 0.00,
-      }).eq('id', existingStudentRow.id);
-
-      if (upErr && (upErr.code === '23503' || String(upErr.message || '').includes('foreign key constraint'))) {
-        const { error: upErr2 } = await supabase.from('students').update({
-          full_name: student.fullName,
-          required_hours: Number(student.targetHours) || 240.00,
-          completed_hours: Number(student.renderedHours) || 0.00,
-        }).eq('id', existingStudentRow.id);
-        upErr = upErr2;
+      };
+      if (student.coordinatorId && isValidUuid(student.coordinatorId)) {
+        updateData.coordinator_id = student.coordinatorId;
       }
-      insErr = upErr;
+      if ((student as any).groupId) {
+        updateData.group_id = (student as any).groupId;
+      }
+      const { error: upErr } = await supabase.from('students').update(updateData).eq('id', existingStudentRow.id);
       logDbDiagnostic('update', !upErr, 'students', { id: existingStudentRow.id }, upErr);
     } else {
       let payload: any = {
@@ -861,15 +823,15 @@ export async function syncStudentToSupabase(student: {
         full_name: student.fullName,
         required_hours: Number(student.targetHours) || 240.00,
         completed_hours: Number(student.renderedHours) || 0.00,
+        coordinator_id: isValidUuid(student.coordinatorId) ? student.coordinatorId : null,
+        group_id: (student as any).groupId || null,
       };
       let { error: err1 } = await supabase.from('students').upsert(payload, { onConflict: 'id' });
       if (err1 && (err1.code === '23503' || String(err1.message || '').includes('foreign key constraint'))) {
         delete payload.auth_user_id;
         const { error: err2 } = await supabase.from('students').upsert(payload, { onConflict: 'id' });
-        insErr = err2;
         logDbDiagnostic('upsert_without_auth_fk', !err2, 'students', { id: singleProfileId }, err2);
       } else {
-        insErr = err1;
         logDbDiagnostic('upsert', !err1, 'students', { id: singleProfileId }, err1);
       }
     }
@@ -877,54 +839,38 @@ export async function syncStudentToSupabase(student: {
     logDbDiagnostic('syncStudentToSupabase_students', false, 'students', student, sErr);
   }
 
-  // 2. Sync to student_profiles table
+  // 2. Persist rich metadata directly to Supabase Auth user
   try {
-    const studentPayload: any = {
-      id: singleProfileId,
-      user_id: singleProfileId,
-      student_id_number: studentIdNum,
-      bu_id: student.buId,
-      full_name: student.fullName,
-      email: cleanEmail,
-      degree: student.degree || 'BS Computer Science',
-      class_block: student.classBlock || null,
-      company_id: student.companyId || null,
-      company_name: student.companyName || null,
-      company_branch: student.companyBranch || null,
-      mentor_name: student.mentorName || null,
-      coordinator_id: student.coordinatorId || null,
-      coordinator_name: student.coordinatorName || null,
-      coordinator_email: student.coordinatorEmail || null,
-      duty_start: student.dutyStart || '08:00',
-      duty_end: student.dutyEnd || '17:00',
-      target_hours: student.targetHours || 240,
-      rendered_hours: student.renderedHours || 0,
-      scheduled_deployment_date: student.scheduledDeploymentDate || null,
-      deployment_approved: Boolean(student.deploymentApproved),
-      enrollment_status: student.enrollmentStatus || 'pending_approval',
-      status: student.status || 'active',
-      avatar_url: avatarToSave,
-      updated_at: new Date().toISOString(),
-    };
-    let { error: spErr } = await supabase.from('student_profiles').upsert(studentPayload, { onConflict: 'email' });
-    if (
-      spErr &&
-      (spErr.code === '23503' ||
-        spErr.code === 'PGRST204' ||
-        String(spErr.message || '').includes('foreign key constraint') ||
-        String(spErr.message || '').includes('column'))
-    ) {
-      delete studentPayload.user_id;
-      delete studentPayload.student_id_number;
-      delete studentPayload.coordinator_email;
-      delete studentPayload.scheduled_deployment_date;
-      delete studentPayload.deployment_approved;
-      const { error: spErr2 } = await supabase.from('student_profiles').upsert(studentPayload, { onConflict: 'email' });
-      spErr = spErr2;
-    }
-    logDbDiagnostic('upsert', !spErr, 'student_profiles', { email: cleanEmail }, spErr);
-  } catch (spErr) {
-    logDbDiagnostic('syncStudentToSupabase_student_profiles', false, 'student_profiles', student, spErr);
+    await supabase.auth.updateUser({
+      data: {
+        bu_id: student.buId,
+        student_id_number: studentIdNum,
+        full_name: student.fullName,
+        degree: student.degree || 'BS Computer Science',
+        class_block: student.classBlock || '',
+        company_id: student.companyId || '',
+        company_name: student.companyName || '',
+        company_branch: student.companyBranch || '',
+        mentor_name: student.mentorName || '',
+        coordinator_id: student.coordinatorId || '',
+        coordinator_name: student.coordinatorName || '',
+        coordinator_email: student.coordinatorEmail || '',
+        duty_start: student.dutyStart || '08:00',
+        duty_end: student.dutyEnd || '17:00',
+        target_hours: student.targetHours || 240,
+        rendered_hours: student.renderedHours || 0,
+        scheduled_deployment_date: student.scheduledDeploymentDate || null,
+        deployment_approved: Boolean(student.deploymentApproved),
+        enrollment_status: student.enrollmentStatus || 'not_enrolled',
+        status: student.status || 'active',
+        group_id: (student as any).groupId || null,
+        group_name: (student as any).groupName || null,
+        pending_group_invitation: (student as any).pendingGroupInvitation || null,
+        avatar_url: avatarToSave || '',
+      },
+    });
+  } catch (metaErr) {
+    console.warn('Could not update user metadata in Supabase Auth:', metaErr);
   }
 }
 
@@ -1132,14 +1078,6 @@ export function subscribeToRealtimeData(onChangeCallback: (payload: any) => void
         { event: '*', schema: 'public', table: 'students' },
         (payload) => {
           console.log('[SUPABASE REALTIME] Students changed:', payload.eventType);
-          onChangeCallback(payload);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'student_profiles' },
-        (payload) => {
-          console.log('[SUPABASE REALTIME] Student profile changed:', payload.eventType);
           onChangeCallback(payload);
         }
       )

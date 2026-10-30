@@ -242,7 +242,7 @@ export default function App() {
 
       // c) Record found ONLY in students -> lock into Student dashboard
       if (hasStudent) {
-        const studentRecord: Student = mapDbStudentRecord(studentRow, studentProfile, cleanEmail);
+        const studentRecord: Student = mapDbStudentRecord(studentRow, studentProfile, cleanEmail, authUser.user_metadata);
         const studentUser: User = {
           id: studentRecord.id || authUserId,
           email: cleanEmail,
