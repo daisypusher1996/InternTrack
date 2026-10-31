@@ -62,10 +62,19 @@ export const BUMascotWelcome: React.FC<BUMascotWelcomeProps> = ({
             )}
           </div>
 
-          <h2 className="text-xl md:text-2xl font-black tracking-tight text-white">
+          <h2 className="text-xl md:text-2xl font-black tracking-tight text-white flex items-center flex-wrap gap-2">
             <ShinyText
-              text={`${greeting}, ${userName}`}
+              text={`${greeting},`}
               color="#b5b5b5"
+              shineColor="#ffffff"
+              speed={2}
+              shineWidth={40}
+              softness={0.8}
+              trigger="loop"
+            />
+            <ShinyText
+              text={userName}
+              color="#3B82F6"
               shineColor="#ffffff"
               speed={2}
               shineWidth={40}

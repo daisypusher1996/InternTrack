@@ -49,6 +49,11 @@ export const ShinyText: React.FC<ShinyTextProps> = ({
     return () => observer.disconnect();
   }, [trigger]);
 
+  // Normalize hex colors that may omit the '#' prefix (e.g. '3B82F6')
+  const normalizeColor = (c: string) => (/^[0-9A-Fa-f]{3,8}$/.test(c.trim()) ? `#${c.trim()}` : c);
+  const baseColor = normalizeColor(color);
+  const highlightColor = normalizeColor(shineColor);
+
   // Compute gradient stops based on shineWidth and softness
   const half = Math.min(48, Math.max(5, shineWidth / 2));
   const smoothFactor = Math.max(0.05, Math.min(1, softness));
@@ -58,7 +63,7 @@ export const ShinyText: React.FC<ShinyTextProps> = ({
   const p3 = Math.min(100, 50 + half * (1 - smoothFactor * 0.7));
   const p4 = Math.min(100, 50 + half);
 
-  const gradient = `linear-gradient(120deg, ${color} 0%, ${color} ${p0}%, ${color} ${p1}%, ${shineColor} ${p2}%, ${color} ${p3}%, ${color} ${p4}%, ${color} 100%)`;
+  const gradient = `linear-gradient(120deg, ${baseColor} 0%, ${baseColor} ${p0}%, ${baseColor} ${p1}%, ${highlightColor} ${p2}%, ${baseColor} ${p3}%, ${baseColor} ${p4}%, ${baseColor} 100%)`;
 
   let animationPlayState: CSSProperties['animation'] = 'none';
   if (!disabled) {

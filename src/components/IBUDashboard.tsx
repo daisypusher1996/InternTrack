@@ -144,10 +144,19 @@ export const IBUDashboard: React.FC<IBUDashboardProps> = ({
     <div className="space-y-8 max-w-[1400px] mx-auto py-2">
       {/* 1. HERO GREETING (Exact replication of top greeting) */}
       <div className="border-b border-[#141d2e] pb-6 space-y-1">
-        <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+        <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight flex items-center flex-wrap gap-2.5">
           <ShinyText
-            text={`Welcome back, ${firstName}`}
+            text="Welcome back,"
             color="#b5b5b5"
+            shineColor="#ffffff"
+            speed={2}
+            shineWidth={40}
+            softness={0.8}
+            trigger="loop"
+          />
+          <ShinyText
+            text={firstName}
+            color="#3B82F6"
             shineColor="#ffffff"
             speed={2}
             shineWidth={40}
