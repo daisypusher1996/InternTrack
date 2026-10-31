@@ -1,5 +1,6 @@
 import React from 'react';
 import { GraduationCap, Building2, AlertCircle } from 'lucide-react';
+import ShinyText from './ShinyText';
 
 interface BUMascotWelcomeProps {
   userName: string;
@@ -62,7 +63,15 @@ export const BUMascotWelcome: React.FC<BUMascotWelcomeProps> = ({
           </div>
 
           <h2 className="text-xl md:text-2xl font-black tracking-tight text-white">
-            {greeting}, <span className="text-[#F26522]">{userName}</span>
+            <ShinyText
+              text={`${greeting}, ${userName}`}
+              color="#b5b5b5"
+              shineColor="#ffffff"
+              speed={2}
+              shineWidth={40}
+              softness={0.8}
+              trigger="loop"
+            />
           </h2>
 
           {/* Note Summary */}

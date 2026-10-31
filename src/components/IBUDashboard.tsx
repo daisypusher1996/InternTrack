@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ShinyText from './ShinyText';
 import {
   GraduationCap,
   ChevronRight,
@@ -144,7 +145,15 @@ export const IBUDashboard: React.FC<IBUDashboardProps> = ({
       {/* 1. HERO GREETING (Exact replication of top greeting) */}
       <div className="border-b border-[#141d2e] pb-6 space-y-1">
         <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-          Welcome back, {firstName}
+          <ShinyText
+            text={`Welcome back, ${firstName}`}
+            color="#b5b5b5"
+            shineColor="#ffffff"
+            speed={2}
+            shineWidth={40}
+            softness={0.8}
+            trigger="loop"
+          />
         </h1>
         <p className="text-xs sm:text-sm text-slate-400">
           Access your assigned university services and account tools in one place.

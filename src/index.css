@@ -48,3 +48,14 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3e3e3e;
 }
+
+/* Shiny Text sweep animation */
+@keyframes shiny-text-sweep {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -150% 0;
+  }
+}
+
