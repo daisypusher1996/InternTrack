@@ -4287,9 +4287,28 @@ app.use((req, res, next) => {
   app.post('/api/ai/run-anomaly-detection', async (req: Request, res: Response) => {
     try {
       await loadInitialDataFromSupabase();
-      const { studentId } = req.body;
+      const { studentId, clientLogs } = req.body;
+
+      // Merge fresh client-side attendance logs if provided
+      if (clientLogs && Array.isArray(clientLogs)) {
+        for (const cl of clientLogs) {
+          const idx = attendanceLogs.findIndex(
+            (al) => al.id === cl.id || (al.studentId === cl.studentId && al.date === cl.date)
+          );
+          if (idx >= 0) {
+            attendanceLogs[idx] = { ...attendanceLogs[idx], ...cl };
+          } else {
+            attendanceLogs.unshift(cl);
+          }
+        }
+      }
+
       const now = new Date();
-      const todayStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      const todayIso = toIsoDate(now.toISOString()); // e.g. "2026-10-31"
+      const todayLong = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      const todayShort = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const dayOfWeek = now.getDay(); // 0 = Sun, 6 = Sat
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
       const currentHours = now.getHours();
       const currentMinutes = now.getMinutes();
       const currentTotalMins = currentHours * 60 + currentMinutes;
@@ -4318,20 +4337,57 @@ app.use((req, res, next) => {
       let absentCount = 0;
 
       for (const st of targetStudents) {
-        // Today's log for student
-        const studentTodayLogs = attendanceLogs.filter(
-          (l) => l.studentId === st.id && (l.date === todayStr || l.date.includes(todayStr.split(',')[0]))
-        );
-        const latestLog = studentTodayLogs[0] || null;
+        // Find all logs for this student matching today's date
+        const studentTodayLogs = attendanceLogs.filter((l) => {
+          const isStudent =
+            l.studentId === st.id ||
+            (st.buId && l.studentIdNumber === st.buId) ||
+            (l.studentName && l.studentName.toLowerCase() === st.fullName.toLowerCase());
+          if (!isStudent) return false;
+
+          const logDateIso = toIsoDate(l.date);
+          const timeInIso = l.actualTimeIn ? toIsoDate(l.actualTimeIn) : '';
+          const timeOutIso = l.actualTimeOut ? toIsoDate(l.actualTimeOut) : '';
+
+          return (
+            logDateIso === todayIso ||
+            timeInIso === todayIso ||
+            timeOutIso === todayIso ||
+            l.date === todayIso ||
+            l.date === todayLong ||
+            l.date === todayShort ||
+            (l.date && l.date.includes(todayIso))
+          );
+        });
+
+        // Sort chronologically by actualTimeIn
+        studentTodayLogs.sort((a, b) => {
+          const ta = a.actualTimeIn ? new Date(a.actualTimeIn).getTime() : 0;
+          const tb = b.actualTimeIn ? new Date(b.actualTimeIn).getTime() : 0;
+          return ta - tb;
+        });
+
+        const latestLog = studentTodayLogs[studentTodayLogs.length - 1] || null;
+        const activeLog = studentTodayLogs.find((l) => l.actualTimeIn && !l.actualTimeOut) || null;
 
         const dutyStart = st.dutyStart || '08:00';
         const dutyEnd = st.dutyEnd || '17:00';
         const [startH, startM] = dutyStart.split(':').map(Number);
-        const startTotalMins = startH * 60 + startM;
+        const [endH, endM] = dutyEnd.split(':').map(Number);
+        const startTotalMins = (isNaN(startH) ? 8 : startH) * 60 + (isNaN(startM) ? 0 : startM);
+        const endTotalMins = (isNaN(endH) ? 17 : endH) * 60 + (isNaN(endM) ? 0 : endM);
         const graceEndMins = startTotalMins + 15;
 
-        const isWfh = (st.wfhDates || []).includes(todayStr) || (st.wfhDates || []).includes(toIsoDate(todayStr));
-        const totalHoursRendered = studentTodayLogs.reduce((acc, l) => acc + (Number(l.hoursRendered) || 0), 0);
+        const isWfh =
+          (st.wfhDates || []).includes(todayIso) ||
+          (st.wfhDates || []).includes(todayLong) ||
+          (st.wfhDates || []).includes(toIsoDate(todayLong)) ||
+          studentTodayLogs.some((l) => l.status === 'wfh');
+
+        const totalHoursRendered = studentTodayLogs.reduce(
+          (acc, l) => acc + (Number(l.hoursRendered) || 0),
+          0
+        );
 
         let studentStatus: 'doing_fine' | 'lacking_hours' | 'absent' | 'wfh' = 'doing_fine';
         let statusLabel = 'Doing Fine (On Duty)';
@@ -4342,16 +4398,75 @@ app.use((req, res, next) => {
           statusLabel = 'Work From Home (Approved)';
           detailMessage = `${st.fullName} has an approved WFH arrangement for today. Exempt from workstation check-in.`;
           doingFineCount++;
-        } else if (!latestLog || !latestLog.actualTimeIn) {
-          // No check-in yet
-          if (currentTotalMins > graceEndMins) {
-            // Past grace window - absent!
+        } else if (activeLog) {
+          // Currently checked in and actively on duty!
+          studentStatus = 'doing_fine';
+          statusLabel = 'Doing Fine (Active On Duty)';
+          const inTimeDisplay = activeLog.actualTimeIn
+            ? (activeLog.actualTimeIn.includes('T')
+                ? new Date(activeLog.actualTimeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : activeLog.actualTimeIn)
+            : 'Earlier';
+          detailMessage = `Intern is actively rendering duty at workstation. Recorded Time-In at ${inTimeDisplay}.`;
+          doingFineCount++;
+        } else if (studentTodayLogs.length > 0 && studentTodayLogs.some((l) => l.actualTimeIn && l.actualTimeOut)) {
+          // Closed shift(s) recorded today
+          if (totalHoursRendered >= 7.5) {
+            studentStatus = 'doing_fine';
+            statusLabel = 'Doing Fine (Full Duty Completed)';
+            detailMessage = `Completed full duty shift successfully with ${totalHoursRendered.toFixed(1)} hours rendered.`;
+            doingFineCount++;
+          } else if (currentTotalMins < endTotalMins) {
+            studentStatus = 'doing_fine';
+            statusLabel = 'Doing Fine (Midday Shift Break)';
+            detailMessage = `Morning duty shift logged (${totalHoursRendered.toFixed(1)}h). Afternoon duty resumes according to scheduled duty window.`;
+            doingFineCount++;
+          } else {
+            studentStatus = 'lacking_hours';
+            statusLabel = `Lacking Expected Hours (${totalHoursRendered.toFixed(1)}h / 8.0h)`;
+            detailMessage = `Intern timed out with insufficient daily duty duration (${totalHoursRendered.toFixed(1)}h of 8.0h standard). Lacking ${(8.0 - totalHoursRendered).toFixed(1)}h.`;
+            lackingHoursCount++;
+
+            const alertId = `alt-undertime-${st.id}-${Date.now()}`;
+            if (!attendanceAlerts.some((a) => a.studentId === st.id && a.anomalyType === 'UNDERTIME_DEPARTURE')) {
+              attendanceAlerts.unshift({
+                id: alertId,
+                studentId: st.id,
+                studentName: st.fullName,
+                companyName: st.companyName,
+                anomalyType: 'UNDERTIME_DEPARTURE',
+                severity: 'medium',
+                detectionMethod: 'Workstation Duty Duration Analysis',
+                anomalyScore: 0.88,
+                expectedSchedule: `${dutyStart} – ${dutyEnd}`,
+                message: detailMessage,
+                emailDispatched: true,
+                pushDispatched: true,
+                status: 'pending_review',
+                createdAt: new Date().toISOString(),
+              });
+            }
+          }
+        } else {
+          // No check-in recorded yet today
+          const dutyDaysStr = (st.dutyDays || 'Monday - Friday').toLowerCase();
+          const isDutyScheduledToday =
+            !isWeekend ||
+            (dayOfWeek === 6 && dutyDaysStr.includes('saturday')) ||
+            (dayOfWeek === 0 && dutyDaysStr.includes('sunday'));
+
+          if (!isDutyScheduledToday) {
+            studentStatus = 'doing_fine';
+            statusLabel = 'Off-Duty Day (No Duty Scheduled)';
+            detailMessage = `Today is outside scheduled practicum days (${st.dutyDays || 'Monday - Friday'}). No attendance required.`;
+            doingFineCount++;
+          } else if (currentTotalMins > graceEndMins) {
+            // Past grace window on a scheduled duty day - absent!
             studentStatus = 'absent';
             statusLabel = 'Absent (No Check-In Recorded)';
             detailMessage = `${st.fullName} has not recorded a Time-In for the scheduled shift (${dutyStart} – ${dutyEnd}). 15-minute grace period has expired.`;
             absentCount++;
 
-            // Create alert if not already present
             const alertId = `alt-absent-${st.id}-${Date.now()}`;
             if (!attendanceAlerts.some((a) => a.studentId === st.id && a.anomalyType === 'MISSED_ATTENDANCE_WINDOW')) {
               attendanceAlerts.unshift({
@@ -4377,45 +4492,6 @@ app.use((req, res, next) => {
             detailMessage = `Duty shift begins at ${dutyStart}. Student is currently within the standard check-in window.`;
             doingFineCount++;
           }
-        } else if (latestLog.actualTimeIn && !latestLog.actualTimeOut) {
-          // Currently checked in and actively on duty!
-          studentStatus = 'doing_fine';
-          statusLabel = 'Doing Fine (Active On Duty)';
-          detailMessage = `Intern is actively rendering duty. Recorded Time-In at ${latestLog.actualTimeIn}.`;
-          doingFineCount++;
-        } else if (latestLog.actualTimeIn && latestLog.actualTimeOut) {
-          // Closed shift - check hours
-          if (totalHoursRendered < 8.0) {
-            studentStatus = 'lacking_hours';
-            statusLabel = `Lacking Expected Hours (${totalHoursRendered.toFixed(1)}h / 8.0h)`;
-            detailMessage = `Intern timed out with insufficient daily duty duration (${totalHoursRendered.toFixed(1)}h of 8h standard). Lacking ${(8.0 - totalHoursRendered).toFixed(1)}h.`;
-            lackingHoursCount++;
-
-            const alertId = `alt-undertime-${st.id}-${Date.now()}`;
-            if (!attendanceAlerts.some((a) => a.studentId === st.id && a.anomalyType === 'UNDERTIME_DEPARTURE')) {
-              attendanceAlerts.unshift({
-                id: alertId,
-                studentId: st.id,
-                studentName: st.fullName,
-                companyName: st.companyName,
-                anomalyType: 'UNDERTIME_DEPARTURE',
-                severity: 'medium',
-                detectionMethod: 'Workstation Duty Duration Analysis',
-                anomalyScore: 0.88,
-                expectedSchedule: `${dutyStart} – ${dutyEnd}`,
-                message: detailMessage,
-                emailDispatched: true,
-                pushDispatched: true,
-                status: 'pending_review',
-                createdAt: new Date().toISOString(),
-              });
-            }
-          } else {
-            studentStatus = 'doing_fine';
-            statusLabel = 'Doing Fine (Full Duty Completed)';
-            detailMessage = `Completed full duty shift successfully with ${totalHoursRendered.toFixed(1)} hours rendered.`;
-            doingFineCount++;
-          }
         }
 
         evaluatedStudents.push({
@@ -4425,8 +4501,8 @@ app.use((req, res, next) => {
           companyName: st.companyName,
           status: studentStatus,
           statusLabel,
-          actualTimeIn: latestLog?.actualTimeIn || null,
-          actualTimeOut: latestLog?.actualTimeOut || null,
+          actualTimeIn: studentTodayLogs[0]?.actualTimeIn || null,
+          actualTimeOut: activeLog ? null : (latestLog?.actualTimeOut || null),
           expectedSchedule: `${dutyStart} – ${dutyEnd}`,
           hoursRendered: totalHoursRendered,
           detailMessage,

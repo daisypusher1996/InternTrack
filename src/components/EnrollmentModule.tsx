@@ -16,6 +16,9 @@ import {
   Info,
   MapPin,
   User as UserIcon,
+  AlertCircle,
+  X,
+  Check,
 } from './icons';
 import { Student, Group, Company } from '../types';
 
@@ -26,6 +29,8 @@ interface EnrollmentModuleProps {
   onEnrollStudent: (studentData: any) => Promise<void>;
   onCreateGroup?: (groupData: any) => Promise<void>;
   onRegisterCompany: (companyData: any) => Promise<void>;
+  onApproveEnrollment?: (studentId: string) => Promise<void>;
+  onDeclineEnrollment?: (studentId: string, reason?: string) => Promise<void>;
   isCoordinator?: boolean;
 }
 
@@ -36,12 +41,17 @@ export const EnrollmentModule: React.FC<EnrollmentModuleProps> = ({
   onEnrollStudent,
   onCreateGroup,
   onRegisterCompany,
+  onApproveEnrollment,
+  onDeclineEnrollment,
   isCoordinator = false,
 }) => {
   // If coordinator, default tab is 'deployments' (view-only directory)
-  const [activeTab, setActiveTab] = useState<'deployments' | 'categories' | 'company'>('deployments');
+  const [activeTab, setActiveTab] = useState<'pending' | 'deployments' | 'categories' | 'company'>('deployments');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [processingStudentId, setProcessingStudentId] = useState<string | null>(null);
+  const [decliningStudentId, setDecliningStudentId] = useState<string | null>(null);
+  const [declineReason, setDeclineReason] = useState('');
 
   // Search & filter states for deployments directory
   const [searchQuery, setSearchQuery] = useState('');
@@ -147,8 +157,58 @@ export const EnrollmentModule: React.FC<EnrollmentModuleProps> = ({
     }
   };
 
-  // Filtered list of student deployments
-  const filteredStudents = students.filter((s) => {
+  // Pending students waiting for coordinator's approval
+  const pendingStudents = useMemo(() => {
+    return students.filter(
+      (s) =>
+        (s.enrollmentStatus === 'pending_approval' || s.enrollmentStatus === 'pending_peer_approval') &&
+        !s.isArchived
+    );
+  }, [students]);
+
+  // Active deployments: strictly enrolled & approved students
+  const activeEnrolledStudents = useMemo(() => {
+    return students.filter(
+      (s) =>
+        s.enrollmentStatus === 'approved' &&
+        !s.isArchived &&
+        s.companyName &&
+        s.companyName !== 'Not Yet Enrolled (Pending Application)'
+    );
+  }, [students]);
+
+  const handleApprove = async (studentId: string) => {
+    if (!onApproveEnrollment) return;
+    setProcessingStudentId(studentId);
+    try {
+      await onApproveEnrollment(studentId);
+      setSuccessMessage('Student intern enrollment approved successfully.');
+      setTimeout(() => setSuccessMessage(null), 4000);
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setProcessingStudentId(null);
+    }
+  };
+
+  const handleDecline = async (studentId: string) => {
+    if (!onDeclineEnrollment) return;
+    setProcessingStudentId(studentId);
+    try {
+      await onDeclineEnrollment(studentId, declineReason || 'Enrollment application declined by coordinator.');
+      setDecliningStudentId(null);
+      setDeclineReason('');
+      setSuccessMessage('Student intern enrollment application declined.');
+      setTimeout(() => setSuccessMessage(null), 4000);
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setProcessingStudentId(null);
+    }
+  };
+
+  // Filtered list of student deployments (strictly enrolled & approved students)
+  const filteredStudents = activeEnrolledStudents.filter((s) => {
     const matchesSearch =
       s.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       s.buId.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -190,6 +250,18 @@ export const EnrollmentModule: React.FC<EnrollmentModuleProps> = ({
 
           {/* Navigation Tabs Placed Cleanly Below the Description */}
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            {/* Pending Student Interns button placed before Active Deployments */}
+            <button
+              onClick={() => setActiveTab('pending')}
+              className={`px-4 py-2 rounded-lg transition-all active:scale-95 cursor-pointer flex items-center gap-2 text-xs font-bold border ${
+                activeTab === 'pending'
+                  ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-400/40 shadow-xs'
+                  : 'bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 text-amber-500" />
+              <span>Pending Student Interns ({pendingStudents.length})</span>
+            </button>
             <button
               onClick={() => setActiveTab('deployments')}
               className={`px-4 py-2 rounded-lg transition-all active:scale-95 cursor-pointer flex items-center gap-2 text-xs font-bold border ${
@@ -199,7 +271,7 @@ export const EnrollmentModule: React.FC<EnrollmentModuleProps> = ({
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>Active Deployments ({students.length})</span>
+              <span>Active Deployments ({activeEnrolledStudents.length})</span>
             </button>
             <button
               onClick={() => setActiveTab('categories')}
@@ -243,6 +315,162 @@ export const EnrollmentModule: React.FC<EnrollmentModuleProps> = ({
         )}
       </div>
 
+      {/* Tab 0: Pending Student Interns (Awaiting Coordinator Review & Approval) */}
+      {activeTab === 'pending' && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h2 className="text-base font-bold text-[#0B2545] dark:text-white flex items-center gap-2">
+                <Clock className="w-5 h-5 text-amber-500" />
+                <span>Pending Student Interns ({pendingStudents.length})</span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Student interns waiting for the coordinator's review and official approval before commencing duty.
+              </p>
+            </div>
+            <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              {pendingStudents.length} Application{pendingStudents.length === 1 ? '' : 's'} Pending Review
+            </div>
+          </div>
+
+          {decliningStudentId && (
+            <div className="p-4 bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-xl space-y-2">
+              <h4 className="text-xs font-bold text-red-800 dark:text-red-200 flex items-center gap-1.5">
+                <AlertCircle className="w-4 h-4 text-red-600" />
+                Specify Reason for Declining Enrollment Application
+              </h4>
+              <textarea
+                value={declineReason}
+                onChange={(e) => setDeclineReason(e.target.value)}
+                placeholder="State why this application is declined (e.g. invalid host training establishment, unverified MOA, schedule conflicts)..."
+                rows={2}
+                className="w-full text-xs p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-red-300 dark:border-red-700 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-red-500"
+              />
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setDecliningStudentId(null); setDeclineReason(''); }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDecline(decliningStudentId)}
+                  disabled={processingStudentId === decliningStudentId}
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-700 text-white transition-all active:scale-95 shadow-xs"
+                >
+                  {processingStudentId === decliningStudentId ? 'Declining...' : 'Confirm Decline'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {pendingStudents.length === 0 ? (
+            <div className="py-12 px-4 text-center rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-dashed border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="w-10 h-10 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">No Pending Student Interns</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                All registered student interns have either been approved for active deployment or have not yet submitted their HTE application.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {pendingStudents.map((stu) => (
+                <div
+                  key={stu.id}
+                  className="p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 shadow-2xs hover:shadow-xs transition-shadow space-y-3"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-[#0B2545] dark:bg-slate-800 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-xs">
+                        {stu.fullName.charAt(0)}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-extrabold text-sm text-[#0B2545] dark:text-white">{stu.fullName}</h3>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                            {stu.buId || stu.studentIdNumber || 'Verified ID'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                          {stu.degree || 'Bachelor of Science in Computer Science'} • {stu.classBlock || 'BSCS 4-A'}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="self-start sm:self-auto px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800">
+                      Pending Coordinator Approval
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Host Training Establishment (HTE)</span>
+                      <strong className="text-slate-900 dark:text-white font-semibold flex items-center gap-1">
+                        <Building2 className="w-3.5 h-3.5 text-[#F26522] shrink-0" />
+                        <span>{stu.companyName || 'Not Assigned'}</span>
+                      </strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">{stu.companyBranch || 'Main Branch'}</span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Duty Schedule & Hours</span>
+                      <strong className="text-slate-900 dark:text-white font-mono flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span>{stu.dutyStart || '08:00'} – {stu.dutyEnd || '17:00'}</span>
+                      </strong>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold block">{stu.targetHours || 240} Required Hours</span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Deployment Target</span>
+                      <strong className="text-slate-900 dark:text-white font-semibold flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-[#F26522] shrink-0" />
+                        <span>{stu.scheduledDeploymentDate || stu.startDate || 'Immediate Start'}</span>
+                      </strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block">{stu.dutyDays || 'Monday - Friday'}</span>
+                    </div>
+
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">Company Mentor / Liaison</span>
+                      <strong className="text-slate-900 dark:text-white font-semibold flex items-center gap-1">
+                        <UserIcon className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <span className="truncate">{stu.mentorName || 'Company Supervisor'}</span>
+                      </strong>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">{stu.groupName ? `Cohort: ${stu.groupName}` : 'Individual'}</span>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="pt-2 flex items-center justify-end gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setDecliningStudentId(stu.id)}
+                      disabled={processingStudentId === stu.id}
+                      className="px-3.5 py-2 rounded-lg bg-slate-100 hover:bg-red-50 dark:bg-slate-800 dark:hover:bg-red-950/40 text-slate-700 hover:text-red-600 dark:text-slate-300 dark:hover:text-red-400 font-bold transition-all active:scale-95 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Decline</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleApprove(stu.id)}
+                      disabled={processingStudentId === stu.id}
+                      className="px-4 py-2 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white font-bold transition-all active:scale-95 shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{processingStudentId === stu.id ? 'Approving...' : 'Approve Enrollment & HTE'}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Tab 1: Active Deployments Directory (View-Only Table & Audit for Coordinator) */}
       {activeTab === 'deployments' && (
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
@@ -275,9 +503,8 @@ export const EnrollmentModule: React.FC<EnrollmentModuleProps> = ({
                 onChange={(e) => setStatusFilter(e.target.value as any)}
                 className="py-1.5 px-3 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-300 font-semibold focus:outline-none focus:ring-1 focus:ring-[#F26522]"
               >
-                <option value="all">All Statuses</option>
+                <option value="all">All Active Deployments</option>
                 <option value="approved">Approved & Active</option>
-                <option value="pending_approval">Pending Approval</option>
                 <option value="declined">Declined</option>
               </select>
 

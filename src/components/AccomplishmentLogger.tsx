@@ -224,29 +224,6 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               </button>
             )}
 
-            {isCoordinator && groups.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap">
-                <select
-                  value={selectedGroupSummary}
-                  onChange={(e) => setSelectedGroupSummary(e.target.value)}
-                  className="py-2 px-3 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-800 dark:text-white font-semibold focus:outline-none focus:ring-1 focus:ring-[#F26522]"
-                >
-                  {groups.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => onTriggerGroupSummary(selectedGroupSummary)}
-                  className="px-4 py-2.5 rounded-lg bg-[#020617] hover:bg-slate-800 text-white text-xs font-bold transition-all active:scale-95 flex items-center gap-2 shadow-sm hover:shadow-md shrink-0 cursor-pointer"
-                >
-                  <BauhausBrain className="w-4 h-4 text-[#F26522]" />
-                  <span>Synthesize Weekly AI Highlight</span>
-                </button>
-              </div>
-            )}
-
             {!isCoordinator && (
               <button
                 onClick={handleTriggerSynthesis}
@@ -659,16 +636,18 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => {
-                setExportTargetStudentId(currentStudent?.id || students[0]?.id || '');
-                setIsExportModalOpen(true);
-              }}
-              className="px-3 py-1.5 text-xs font-semibold bg-[#0875e1] hover:bg-[#0660bb] text-white rounded-lg shadow-sm hover:shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export DOCX</span>
-            </button>
+            {!isCoordinator && (
+              <button
+                onClick={() => {
+                  setExportTargetStudentId(currentStudent?.id || students[0]?.id || '');
+                  setIsExportModalOpen(true);
+                }}
+                className="px-3 py-1.5 text-xs font-semibold bg-[#0875e1] hover:bg-[#0660bb] text-white rounded-lg shadow-sm hover:shadow transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export DOCX</span>
+              </button>
+            )}
             <div className="relative">
               <BauhausSearch className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               <input
@@ -768,17 +747,19 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                       )}
                     </button>
 
-                    <button
-                      onClick={() => {
-                        setExportTargetStudentId(report.studentId);
-                        setIsExportModalOpen(true);
-                      }}
-                      className="px-2.5 py-1 text-[11px] font-semibold text-[#0875e1] hover:text-white hover:bg-[#0875e1] bg-blue-50 dark:bg-blue-950/60 dark:hover:bg-[#0875e1] border border-blue-200 dark:border-blue-900 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-2xs hover:shadow-xs"
-                      title="Export official BU portfolio form for this student"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>BU Form DOCX</span>
-                    </button>
+                    {!isCoordinator && (
+                      <button
+                        onClick={() => {
+                          setExportTargetStudentId(report.studentId);
+                          setIsExportModalOpen(true);
+                        }}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-[#0875e1] hover:text-white hover:bg-[#0875e1] bg-blue-50 dark:bg-blue-950/60 dark:hover:bg-[#0875e1] border border-blue-200 dark:border-blue-900 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-2xs hover:shadow-xs"
+                        title="Export official BU portfolio form for this student"
+                      >
+                        <Download className="w-3 h-3" />
+                        <span>BU Form DOCX</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

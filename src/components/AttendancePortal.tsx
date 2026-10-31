@@ -22,6 +22,7 @@ import {
 } from './BauhausIcon';
 import { Student, AttendanceLog } from '../types';
 import { useAttendanceStateMachine } from '../hooks/useAttendanceStateMachine';
+import { consolidateDailyAttendanceLogs } from '../lib/attendanceUtils';
 
 interface AttendancePortalProps {
   students: Student[];
@@ -54,9 +55,10 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
   const activeStudentList = isCoordinator ? enrolledStudents : students;
 
   const validAttendanceLogs = useMemo(() => {
-    return isCoordinator
+    const raw = isCoordinator
       ? attendanceLogs.filter((l) => enrolledStudentIds.has(l.studentId))
       : attendanceLogs;
+    return consolidateDailyAttendanceLogs(raw);
   }, [attendanceLogs, enrolledStudentIds, isCoordinator]);
 
   const [selectedStudentId, setSelectedStudentId] = useState<string>(

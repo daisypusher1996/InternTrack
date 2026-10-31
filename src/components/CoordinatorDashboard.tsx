@@ -43,6 +43,7 @@ import {
   User,
 } from '../types';
 import { BUMascotWelcome } from './BUMascotWelcome';
+import { consolidateDailyAttendanceLogs } from '../lib/attendanceUtils';
 
 interface CoordinatorDashboardProps {
   currentUser?: User | null;
@@ -226,7 +227,8 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
   }, [enrolledAssignedStudents]);
 
   const filteredAttendanceLogs = useMemo(() => {
-    return attendanceLogs.filter((l) => enrolledStudentIds.has(l.studentId));
+    const raw = attendanceLogs.filter((l) => enrolledStudentIds.has(l.studentId));
+    return consolidateDailyAttendanceLogs(raw);
   }, [attendanceLogs, enrolledStudentIds]);
 
   // Today's DTR logs for selected block (from filtered logs)

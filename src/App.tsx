@@ -1168,7 +1168,10 @@ export default function App() {
       const res = await fetch('/api/ai/run-anomaly-detection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId: studentId || 'all' }),
+        body: JSON.stringify({
+          studentId: studentId || 'all',
+          clientLogs: attendanceLogs,
+        }),
       });
       const data = await res.json();
       if (data.alerts) {
@@ -1655,6 +1658,8 @@ export default function App() {
                   onEnrollStudent={handleEnrollStudent}
                   onCreateGroup={handleCreateGroup}
                   onRegisterCompany={handleRegisterCompany}
+                  onApproveEnrollment={handleApproveEnrollment}
+                  onDeclineEnrollment={handleDeclineEnrollment}
                   isCoordinator={isCoordinator}
                 />
               )}

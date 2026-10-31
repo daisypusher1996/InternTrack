@@ -495,9 +495,6 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
                 </p>
               </div>
             </div>
-            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-950/80 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-800 uppercase">
-              Action Required
-            </span>
           </div>
 
           <div className="space-y-2">
@@ -508,15 +505,6 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
               >
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2 py-0.2 rounded text-[10px] font-bold uppercase ${
-                        task.urgency === 'urgent'
-                          ? 'bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300'
-                          : 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300'
-                      }`}
-                    >
-                      {task.urgency}
-                    </span>
                     <strong className="text-slate-900 dark:text-white font-bold">{task.title}</strong>
                   </div>
                   <p className="text-slate-600 dark:text-slate-300 text-[11px]">{task.description}</p>
@@ -957,32 +945,6 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
           });
         }}
       />
-
-      {/* BU Official Accomplishment Report (.docx) Export Action Bar - Positioned Below Calendar */}
-      <div className="bg-gradient-to-r from-[#020617] via-[#0B2545] to-[#133E68] rounded-2xl p-5 sm:p-6 text-white border border-slate-800 shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="space-y-1 max-w-xl">
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-0.5 rounded-full bg-[#0875e1]/30 border border-[#0875e1]/60 text-blue-200 text-[10px] font-bold uppercase tracking-wider">
-              Bicol University Official SIP Document
-            </span>
-            <span className="text-xs text-slate-400">CS Form 2026 Portfolio Paper</span>
-          </div>
-          <h3 className="text-base sm:text-lg font-bold text-white">
-            Export Official BU Accomplishment Report (.docx)
-          </h3>
-          <p className="text-xs text-slate-300 leading-relaxed">
-            Generate and export your genuine Daily, Weekly, and Monthly Practicum Portfolio papers directly adhering to Bicol University's student internship report format.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsExportModalOpen(true)}
-          className="shrink-0 px-5 py-3 rounded-xl bg-[#0875e1] hover:bg-[#0660bb] text-white font-bold text-xs transition-all duration-150 active:scale-95 shadow-md hover:shadow-lg flex items-center gap-2.5 cursor-pointer"
-        >
-          <Download className="w-4 h-4" />
-          <span>Export BU Portfolio (.docx)</span>
-        </button>
-      </div>
 
       {/* 6. MODAL: SUBMIT ACCOMPLISHMENT REPORT */}
       {isReportModalOpen && (
