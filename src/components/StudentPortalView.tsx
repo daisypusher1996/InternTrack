@@ -46,6 +46,7 @@ interface StudentPortalViewProps {
   onSubmitExcuse: (alertId: string, excuseNotes: string) => Promise<void>;
   onSubmitReport?: (reportData: any) => Promise<void>;
   onCancelEnrollment?: (studentId: string) => Promise<void>;
+  onRefreshData?: () => Promise<void>;
   coordinatorName?: string;
 }
 
@@ -61,6 +62,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
   onSubmitExcuse,
   onSubmitReport,
   onCancelEnrollment,
+  onRefreshData,
   coordinatorName,
 }) => {
   const [remarks, setRemarks] = useState('');
@@ -837,6 +839,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
         student={student}
         attendanceLogs={attendanceLogs}
         accomplishmentReports={accomplishmentReports}
+        onRefreshData={onRefreshData}
         onOpenReportModal={(dateStr) => {
           setReportDate(dateStr);
           setIsReportModalOpen(true);

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   FileText,
   Send,
@@ -16,15 +16,18 @@ import {
   Info,
   Calendar,
   Download,
+  Trash2,
 } from 'lucide-react';
 import { Student, AccomplishmentReport, Group, AttendanceLog } from '../types';
 import { BUAccomplishmentExportModal } from './BUAccomplishmentExportModal';
+import { deleteAccomplishmentFromSupabase } from '../lib/supabase';
 
 interface AccomplishmentLoggerProps {
   students: Student[];
   groups: Group[];
   accomplishmentReports: AccomplishmentReport[];
   onSubmitReport: (reportData: any) => Promise<void>;
+  onDeleteReport?: (reportId: string) => Promise<void>;
   onTriggerGroupSummary: (groupId: string) => void;
   isCoordinator?: boolean;
   attendanceLogs?: AttendanceLog[];
@@ -35,10 +38,19 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
   groups,
   accomplishmentReports,
   onSubmitReport,
+  onDeleteReport,
   onTriggerGroupSummary,
   isCoordinator = false,
   attendanceLogs = [],
 }) => {
+  // Local reports state for immediate UI feedback on deletion
+  const [localReports, setLocalReports] = useState<AccomplishmentReport[]>(accomplishmentReports);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLocalReports(accomplishmentReports);
+  }, [accomplishmentReports]);
+
   // Modal state for exporting official BU forms
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportTargetStudentId, setExportTargetStudentId] = useState<string>('');
@@ -62,6 +74,26 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
   const [selectedGroupSummary, setSelectedGroupSummary] = useState<string>(groups[0]?.id || '');
 
   const currentStudent = students.find((s) => s.id === selectedStudentId) || students[0];
+
+  const handleDeleteReport = async (reportId: string, studentId: string, date: string) => {
+    const confirmDelete = window.confirm('Are you sure you want to unsubmit / delete this accomplishment report? This will remove the entry from the official logbook.');
+    if (!confirmDelete) return;
+
+    setDeletingId(reportId);
+    try {
+      setLocalReports((prev) => prev.filter((r) => r.id !== reportId));
+      if (onDeleteReport) {
+        await onDeleteReport(reportId);
+      } else {
+        await deleteAccomplishmentFromSupabase(reportId, studentId, date);
+      }
+    } catch (err) {
+      console.error('Failed to unsubmit accomplishment report:', err);
+      setLocalReports(accomplishmentReports);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +125,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
     }
   };
 
-  const filteredReports = accomplishmentReports.filter((r) => {
+  const filteredReports = localReports.filter((r) => {
     const matchesCat = categoryFilter === 'all' || r.workCategory === categoryFilter;
     const matchesSearch =
       r.taskTitle.toLowerCase().includes(searchFilter.toLowerCase()) ||
@@ -103,8 +135,8 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
     return matchesCat && matchesSearch;
   });
 
-  const totalHoursLogged = accomplishmentReports.reduce((acc, r) => acc + (Number(r.hoursSpent) || 0), 0);
-  const uniqueStudentContributors = new Set(accomplishmentReports.map((r) => r.studentId)).size;
+  const totalHoursLogged = localReports.reduce((acc, r) => acc + (Number(r.hoursSpent) || 0), 0);
+  const uniqueStudentContributors = new Set(localReports.map((r) => r.studentId)).size;
 
   return (
     <div className="space-y-6">
@@ -123,11 +155,11 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                 ? 'Intern Daily Accomplishment Reports & Monitoring'
                 : 'Daily Internship Accomplishment Form'}
             </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">
-              {isCoordinator
-                ? 'Review verified daily deliverables, technical milestones, and obstacles documented by student interns across host establishments.'
-                : 'Submissions feed directly into the AI NLP summarization pipeline, which synthesizes weekly progress highlights for Student Internship coordinators.'}
-            </p>
+            {isCoordinator && (
+              <p className="text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">
+                Review verified daily deliverables, technical milestones, and obstacles documented by student interns across host establishments.
+              </p>
+            )}
           </div>
 
           {/* Action Triggers: AI Synthesis & BU DOCX Export */}
@@ -560,17 +592,38 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                     <div className="text-[10px] text-slate-400 font-medium mt-0.5">{report.date}</div>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setExportTargetStudentId(report.studentId);
-                      setIsExportModalOpen(true);
-                    }}
-                    className="mt-2.5 px-2.5 py-1 text-[11px] font-semibold text-[#0875e1] hover:text-white hover:bg-[#0875e1] bg-blue-50 dark:bg-blue-950/60 dark:hover:bg-[#0875e1] border border-blue-200 dark:border-blue-900 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-2xs hover:shadow-xs"
-                    title="Export official BU portfolio form for this student"
-                  >
-                    <Download className="w-3 h-3" />
-                    <span>BU Form DOCX</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 mt-2.5">
+                    <button
+                      onClick={() => handleDeleteReport(report.id, report.studentId, report.date)}
+                      disabled={deletingId === report.id}
+                      className="px-2.5 py-1 text-[11px] font-semibold text-red-600 hover:text-white hover:bg-red-600 bg-red-50 dark:bg-red-950/60 dark:hover:bg-red-600 border border-red-200 dark:border-red-900 rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-2xs hover:shadow-xs"
+                      title="Unsubmit and delete this accomplishment record from logbook"
+                    >
+                      {deletingId === report.id ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                          <span>Deleting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-3 h-3" />
+                          <span>Unsubmit</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setExportTargetStudentId(report.studentId);
+                        setIsExportModalOpen(true);
+                      }}
+                      className="px-2.5 py-1 text-[11px] font-semibold text-[#0875e1] hover:text-white hover:bg-[#0875e1] bg-blue-50 dark:bg-blue-950/60 dark:hover:bg-[#0875e1] border border-blue-200 dark:border-blue-900 rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-2xs hover:shadow-xs"
+                      title="Export official BU portfolio form for this student"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>BU Form DOCX</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             ))

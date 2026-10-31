@@ -1436,6 +1436,201 @@ export async function syncAccomplishmentToSupabase(report: {
 }
 
 /**
+ * Delete / Unsubmit Accomplishment Report directly from Supabase
+ */
+export async function deleteAccomplishmentFromSupabase(
+  reportId: string,
+  studentId?: string,
+  date?: string
+): Promise<boolean> {
+  let deleted = false;
+  if (isSupabaseConfigured && supabase) {
+    try {
+      if (isValidUuid(reportId)) {
+        const { error } = await supabase.from('accomplishment_reports').delete().eq('id', reportId);
+        if (!error) deleted = true;
+      }
+      if (studentId && date) {
+        let studentUuid = isValidUuid(studentId) ? studentId : null;
+        if (!studentUuid) {
+          const { data: sRow } = await supabase.from('students').select('id').eq('full_name', studentId).maybeSingle();
+          if (sRow?.id) studentUuid = sRow.id;
+        }
+        if (studentUuid) {
+          const isoDate = toIsoDate(date);
+          await supabase.from('accomplishment_reports').delete()
+            .eq('student_id', studentUuid)
+            .eq('week_start', isoDate);
+          deleted = true;
+        }
+      }
+    } catch (err) {
+      console.warn('Supabase accomplishment report deletion error:', err);
+    }
+  }
+
+  // Also notify server backend endpoint to remove from in-memory array
+  try {
+    await fetch(`/api/accomplishments/${encodeURIComponent(reportId)}`, {
+      method: 'DELETE',
+    });
+  } catch {}
+
+  return deleted;
+}
+
+/**
+ * Submit Weekend Overtime Request to Supabase
+ */
+export async function requestOvertimeToSupabase(payload: {
+  studentId: string;
+  studentName: string;
+  companyId?: string;
+  companyName?: string;
+  date: string;
+  hoursRequested: number;
+  reason: string;
+}): Promise<boolean> {
+  const isoDate = toIsoDate(payload.date);
+  if (isSupabaseConfigured && supabase) {
+    try {
+      let studentUuid = isValidUuid(payload.studentId) ? payload.studentId : null;
+      if (!studentUuid) {
+        const { data: sRow } = await supabase.from('students').select('id').eq('full_name', payload.studentName).maybeSingle();
+        if (sRow?.id) studentUuid = sRow.id;
+      }
+
+      try {
+        await supabase.from('overtime_requests').insert({
+          student_id: studentUuid,
+          student_name: payload.studentName,
+          date: isoDate,
+          hours_requested: payload.hoursRequested,
+          reason: payload.reason,
+          status: 'pending',
+        });
+      } catch {}
+
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user) {
+        const meta = authData.user.user_metadata || {};
+        const existingOt = meta.overtime_requests || [];
+        const newOt = {
+          id: `ot-${Date.now()}`,
+          studentId: payload.studentId,
+          studentName: payload.studentName,
+          companyId: payload.companyId,
+          companyName: payload.companyName,
+          date: isoDate,
+          hoursRequested: payload.hoursRequested,
+          reason: payload.reason,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        };
+        await supabase.auth.updateUser({
+          data: {
+            overtime_requests: [newOt, ...existingOt],
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('Supabase overtime request error:', err);
+    }
+  }
+
+  try {
+    await fetch('/api/attendance/overtime-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch {}
+
+  return true;
+}
+
+/**
+ * Mark or Unmark Friday as Work From Home (WFH) in Supabase
+ */
+export async function markFridayWfhInSupabase(payload: {
+  studentId: string;
+  studentName: string;
+  date: string;
+  isWfh?: boolean;
+}): Promise<boolean> {
+  const isWfh = payload.isWfh !== false;
+  const isoDate = toIsoDate(payload.date);
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      let studentUuid = isValidUuid(payload.studentId) ? payload.studentId : null;
+      if (!studentUuid) {
+        const { data: sRow } = await supabase.from('students').select('id').eq('full_name', payload.studentName).maybeSingle();
+        if (sRow?.id) studentUuid = sRow.id;
+      }
+
+      if (studentUuid && isWfh) {
+        const isoIn = `${isoDate}T08:00:00.000Z`;
+        const isoOut = `${isoDate}T17:00:00.000Z`;
+        const { data: existingAtt } = await supabase.from('attendances')
+          .select('id')
+          .eq('student_id', studentUuid)
+          .eq('date', isoDate)
+          .maybeSingle();
+
+        if (existingAtt?.id) {
+          await supabase.from('attendances').update({
+            time_in: isoIn,
+            time_out: isoOut,
+            hours_rendered: 8.0,
+            ai_flagged: false,
+          }).eq('id', existingAtt.id);
+        } else {
+          await supabase.from('attendances').insert({
+            student_id: studentUuid,
+            date: isoDate,
+            time_in: isoIn,
+            time_out: isoOut,
+            hours_rendered: 8.0,
+            ai_flagged: false,
+          });
+        }
+      }
+
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user) {
+        const meta = authData.user.user_metadata || {};
+        let wfhDates: string[] = meta.wfh_dates || [];
+        if (isWfh) {
+          if (!wfhDates.includes(isoDate)) wfhDates = [...wfhDates, isoDate];
+        } else {
+          wfhDates = wfhDates.filter((d: string) => d !== isoDate);
+        }
+        await supabase.auth.updateUser({
+          data: { wfh_dates: wfhDates },
+        });
+      }
+    } catch (err) {
+      console.warn('Supabase markFridayWfh error:', err);
+    }
+  }
+
+  try {
+    await fetch('/api/attendance/mark-wfh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        studentId: payload.studentId,
+        date: payload.date,
+        isWfh,
+      }),
+    });
+  } catch {}
+
+  return true;
+}
+
+/**
  * Setup Supabase Realtime subscription to listen for instant postgres changes on attendance,
  * accomplishment reports, and student profiles, broadcasting updates to coordinators live.
  */

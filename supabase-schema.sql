@@ -72,3 +72,15 @@ CREATE TABLE IF NOT EXISTS accomplishment_reports (
     status VARCHAR(50) DEFAULT 'Pending',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS overtime_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+    student_name VARCHAR(255) NOT NULL,
+    date DATE NOT NULL,
+    hours_requested DECIMAL(5, 2) NOT NULL DEFAULT 8.00,
+    reason TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    coordinator_notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

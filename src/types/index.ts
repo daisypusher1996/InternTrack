@@ -128,6 +128,7 @@ export interface Student {
   completionApprovedAt?: string;
   isArchived?: boolean;
   avatarUrl: string;
+  wfhDates?: string[];
   pendingGroupInvitation?: {
     groupId: string;
     groupName: string;
@@ -164,6 +165,20 @@ export interface UnaccomplishedTask {
   actionType: 'time_out' | 'submit_report' | 'submit_excuse' | 'view_enrollment';
 }
 
+export interface OvertimeRequest {
+  id: string;
+  studentId: string;
+  studentName: string;
+  companyId?: string;
+  companyName?: string;
+  date: string;
+  hoursRequested: number;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  coordinatorNotes?: string;
+  createdAt: string;
+}
+
 export interface AttendanceLog {
   id: string;
   studentId: string;
@@ -179,7 +194,7 @@ export interface AttendanceLog {
   expectedTimeOut: string;
   actualTimeOut: string | null;
   hoursRendered: number;
-  status: 'present' | 'late' | 'absent' | 'undertime';
+  status: 'present' | 'late' | 'absent' | 'undertime' | 'wfh';
   verificationStatus: 'verified' | 'pending' | 'flagged';
   workstationIp: string;
   remarks?: string;

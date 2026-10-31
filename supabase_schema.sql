@@ -180,6 +180,19 @@ create table if not exists public.ai_summaries (
   generated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- 10. Overtime Requests
+create table if not exists public.overtime_requests (
+  id uuid primary key default gen_random_uuid(),
+  student_id uuid references public.students(id) on delete cascade,
+  student_name text not null,
+  date date not null,
+  hours_requested numeric default 8,
+  reason text not null,
+  status text default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  coordinator_notes text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- Row Level Security (RLS) Enablement
 alter table public.profiles enable row level security;
 alter table public.companies enable row level security;

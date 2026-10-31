@@ -211,6 +211,8 @@ interface Student {
   completionApprovedAt?: string;
   isArchived?: boolean;
   avatarUrl: string;
+  wfhDates?: string[];
+  overtimeRequests?: OvertimeRequest[];
   pendingGroupInvitation?: {
     groupId: string;
     groupName: string;
@@ -224,6 +226,20 @@ interface Student {
     mentorName?: string;
     invitedAt: string;
   };
+}
+
+export interface OvertimeRequest {
+  id: string;
+  studentId: string;
+  studentName: string;
+  companyId?: string;
+  companyName?: string;
+  date: string;
+  hoursRequested: number;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  coordinatorNotes?: string;
+  createdAt: string;
 }
 
 interface AttendanceLog {
@@ -241,7 +257,7 @@ interface AttendanceLog {
   expectedTimeOut: string;
   actualTimeOut: string | null;
   hoursRendered: number;
-  status: 'present' | 'late' | 'absent' | 'undertime';
+  status: 'present' | 'late' | 'absent' | 'undertime' | 'wfh';
   verificationStatus: 'verified' | 'pending' | 'flagged';
   workstationIp: string;
   remarks?: string;
@@ -690,6 +706,8 @@ async function syncStudentServer(student: Student) {
           group_name: student.groupName || null,
           pending_group_invitation: student.pendingGroupInvitation || null,
           avatar_url: avatarToSave || '',
+          wfh_dates: student.wfhDates || [],
+          overtime_requests: student.overtimeRequests || [],
         },
       });
     } catch {}
@@ -973,6 +991,8 @@ async function loadInitialDataFromSupabase() {
         enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
         deploymentApproved: Boolean(meta.deployment_approved),
         avatarUrl: meta.avatar_url || '',
+        wfhDates: meta.wfh_dates || [],
+        overtimeRequests: meta.overtime_requests || [],
         groupId: s.group_id || meta.group_id || undefined,
         groupName: meta.group_name || undefined,
         pendingGroupInvitation: meta.pending_group_invitation || undefined,
@@ -1014,6 +1034,8 @@ async function loadInitialDataFromSupabase() {
           enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
           deploymentApproved: Boolean(meta.deployment_approved),
           avatarUrl: meta.avatar_url || '',
+          wfhDates: meta.wfh_dates || [],
+          overtimeRequests: meta.overtime_requests || [],
           groupId: meta.group_id || undefined,
           groupName: meta.group_name || undefined,
           pendingGroupInvitation: meta.pending_group_invitation || undefined,
@@ -1189,9 +1211,16 @@ async function loadInitialDataFromSupabase() {
             expectedTimeOut: '17:00',
             actualTimeOut: a.time_out ? (a.time_out.includes('T') ? a.time_out.split('T')[1].slice(0, 5) : a.time_out) : undefined,
             hoursRendered: Number(a.hours_rendered) || 0,
-            status: a.ai_flagged ? 'undertime' : 'present',
+            status: ((matchedSt.wfhDates || []).includes(a.date) || (matchedSt.wfhDates || []).includes(toIsoDate(a.date)))
+              ? 'wfh'
+              : (a.ai_flagged ? 'undertime' : 'present'),
             verificationStatus: 'verified',
-            workstationIp: '192.168.10.155',
+            workstationIp: ((matchedSt.wfhDates || []).includes(a.date) || (matchedSt.wfhDates || []).includes(toIsoDate(a.date)))
+              ? 'Remote WFH'
+              : '192.168.10.155',
+            remarks: ((matchedSt.wfhDates || []).includes(a.date) || (matchedSt.wfhDates || []).includes(toIsoDate(a.date)))
+              ? 'Work From Home (WFH) Authorized'
+              : undefined,
           };
         }).filter(Boolean) as AttendanceLog[]);
       }
@@ -3767,6 +3796,200 @@ app.use((req, res, next) => {
     res.json(log);
   });
 
+  // Submit Weekend Overtime Request
+  app.post('/api/attendance/overtime-request', async (req: Request, res: Response) => {
+    const { studentId, date, hoursRequested = 8, reason = 'Weekend practicum duty required' } = req.body;
+    const student = findStudentRecord(studentId);
+    const dateStr = date ? toIsoDate(date) : new Date().toISOString().split('T')[0];
+    const hoursNum = Number(hoursRequested) || 8;
+
+    const newOtRequest: OvertimeRequest = {
+      id: `ot-${Date.now()}`,
+      studentId: student.id,
+      studentName: student.fullName,
+      companyId: student.companyId,
+      companyName: student.companyName,
+      date: dateStr,
+      hoursRequested: hoursNum,
+      reason: String(reason).trim(),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+
+    if (!student.overtimeRequests) student.overtimeRequests = [];
+    student.overtimeRequests.unshift(newOtRequest);
+
+    // Notify coordinator via alerts
+    const otAlert = {
+      id: `alert-ot-${Date.now()}`,
+      studentId: student.id,
+      studentName: student.fullName,
+      companyName: student.companyName,
+      anomalyType: 'MISSED_ATTENDANCE_WINDOW' as any,
+      severity: 'low' as const,
+      detectionMethod: 'Student Overtime Application',
+      anomalyScore: 0.2,
+      expectedSchedule: `${dateStr} (${hoursNum}h requested)`,
+      message: `Intern ${student.fullName} submitted a weekend overtime request for ${dateStr} (${hoursNum} hrs): ${reason}`,
+      emailDispatched: false,
+      pushDispatched: false,
+      status: 'pending_review' as const,
+      createdAt: new Date().toISOString(),
+    };
+    attendanceAlerts.unshift(otAlert);
+
+    // Supabase sync
+    if (supabase) {
+      try {
+        let studentUuid = isValidUuid(student.id) ? student.id : null;
+        if (!studentUuid) {
+          const { data: sRow } = await supabase.from('students').select('id').eq('full_name', student.fullName).maybeSingle();
+          if (sRow?.id) studentUuid = sRow.id;
+        }
+
+        try {
+          await supabase.from('overtime_requests').insert({
+            student_id: studentUuid,
+            student_name: student.fullName,
+            date: dateStr,
+            hours_requested: hoursNum,
+            reason: reason,
+            status: 'pending',
+          });
+        } catch {}
+
+        if (supabaseAdmin && isValidUuid(student.id)) {
+          await supabaseAdmin.auth.admin.updateUserById(student.id, {
+            user_metadata: {
+              overtime_requests: student.overtimeRequests,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('Overtime request Supabase sync notice:', err);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Overtime request submitted to coordinator for approval.',
+      request: newOtRequest,
+    });
+  });
+
+  // Mark Friday Work From Home (WFH) Exemption
+  app.post('/api/attendance/mark-wfh', async (req: Request, res: Response) => {
+    const { studentId, date, isWfh = true } = req.body;
+    const student = findStudentRecord(studentId);
+    const dateStr = date ? toIsoDate(date) : new Date().toISOString().split('T')[0];
+
+    if (!student.wfhDates) student.wfhDates = [];
+
+    let studentUuid = isValidUuid(student.id) ? student.id : null;
+    if (!studentUuid && supabase) {
+      try {
+        const { data: sRow } = await supabase.from('students').select('id').eq('full_name', student.fullName).maybeSingle();
+        if (sRow?.id) studentUuid = sRow.id;
+      } catch {}
+    }
+
+    if (isWfh) {
+      if (!student.wfhDates.includes(dateStr)) {
+        student.wfhDates.push(dateStr);
+      }
+
+      let log = attendanceLogs.find(
+        (l) => l.studentId === student.id && (l.date === dateStr || toIsoDate(l.date) === dateStr)
+      );
+
+      if (log) {
+        log.status = 'wfh';
+        log.hoursRendered = 8.0;
+        log.remarks = 'Work From Home (WFH) Authorized';
+        log.workstationIp = 'Remote WFH';
+      } else {
+        log = {
+          id: `wfh-${Date.now()}`,
+          studentId: student.id,
+          studentIdNumber: student.studentIdNumber || student.buId,
+          studentName: student.fullName,
+          companyId: student.companyId,
+          companyName: student.companyName,
+          date: dateStr,
+          expectedTimeIn: '08:00',
+          actualTimeIn: '08:00',
+          expectedTimeOut: '17:00',
+          actualTimeOut: '17:00',
+          hoursRendered: 8.0,
+          status: 'wfh',
+          verificationStatus: 'verified',
+          workstationIp: 'Remote WFH',
+          remarks: 'Work From Home (WFH) Authorized',
+        };
+        attendanceLogs.unshift(log);
+      }
+
+      // Sync to Supabase attendances table
+      if (supabase && studentUuid) {
+        try {
+          const isoIn = `${dateStr}T08:00:00.000Z`;
+          const isoOut = `${dateStr}T17:00:00.000Z`;
+          const { data: existingAtt } = await supabase.from('attendances')
+            .select('id')
+            .eq('student_id', studentUuid)
+            .eq('date', dateStr)
+            .maybeSingle();
+
+          if (existingAtt?.id) {
+            await supabase.from('attendances').update({
+              time_in: isoIn,
+              time_out: isoOut,
+              hours_rendered: 8.0,
+              ai_flagged: false,
+            }).eq('id', existingAtt.id);
+          } else {
+            await supabase.from('attendances').insert({
+              student_id: studentUuid,
+              date: dateStr,
+              time_in: isoIn,
+              time_out: isoOut,
+              hours_rendered: 8.0,
+              ai_flagged: false,
+            });
+          }
+        } catch (wfhErr) {
+          console.warn('Supabase WFH attendance sync note:', wfhErr);
+        }
+      }
+    } else {
+      student.wfhDates = student.wfhDates.filter((d: string) => d !== dateStr);
+      const log = attendanceLogs.find(
+        (l) => l.studentId === student.id && (l.date === dateStr || toIsoDate(l.date) === dateStr)
+      );
+      if (log && log.status === 'wfh') {
+        log.status = 'present';
+      }
+    }
+
+    if (supabaseAdmin && isValidUuid(student.id)) {
+      try {
+        await supabaseAdmin.auth.admin.updateUserById(student.id, {
+          user_metadata: {
+            wfh_dates: student.wfhDates,
+          },
+        });
+      } catch {}
+    }
+
+    res.json({
+      success: true,
+      message: isWfh
+        ? `Friday, ${dateStr} marked as Work From Home (WFH). Duty requirement exempted.`
+        : `WFH status removed for ${dateStr}.`,
+      wfhDates: student.wfhDates,
+    });
+  });
+
   // Daily Accomplishment Reports
   app.get('/api/accomplishments', async (req: Request, res: Response) => {
     await loadInitialDataFromSupabase();
@@ -3825,6 +4048,41 @@ app.use((req, res, next) => {
     accomplishmentReports.unshift(newReport);
     syncAccomplishmentServer(newReport);
     res.status(201).json(newReport);
+  });
+
+  // Delete / Unsubmit Accomplishment Report
+  app.delete('/api/accomplishments/:id', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const index = accomplishmentReports.findIndex((r) => r.id === id);
+    let targetReport = index !== -1 ? accomplishmentReports[index] : null;
+    if (index !== -1) {
+      accomplishmentReports.splice(index, 1);
+    }
+
+    if (supabase) {
+      try {
+        if (isValidUuid(id)) {
+          await supabase.from('accomplishment_reports').delete().eq('id', id);
+        }
+        if (targetReport) {
+          let studentUuid = isValidUuid(targetReport.studentId) ? targetReport.studentId : null;
+          if (!studentUuid) {
+            const matched = students.find((s) => s.id === targetReport!.studentId || s.fullName === targetReport!.studentName);
+            if (matched && isValidUuid(matched.id)) studentUuid = matched.id;
+          }
+          if (studentUuid) {
+            const isoDate = toIsoDate(targetReport.date);
+            await supabase.from('accomplishment_reports').delete()
+              .eq('student_id', studentUuid)
+              .eq('week_start', isoDate);
+          }
+        }
+      } catch (dErr) {
+        console.warn('Supabase accomplishment deletion notice:', dErr);
+      }
+    }
+
+    res.json({ success: true, message: 'Accomplishment report unsubmitted and removed successfully.' });
   });
 
   // Attendance Alerts & Python Anomaly Detection Integration

@@ -48,6 +48,7 @@ import {
   syncCompanyToSupabase,
   syncAttendanceToSupabase,
   syncAccomplishmentToSupabase,
+  deleteAccomplishmentFromSupabase,
   subscribeToRealtimeData,
   checkRoleIsolation,
   isSupabaseConfigured,
@@ -1050,6 +1051,23 @@ export default function App() {
     await refreshData();
   };
 
+  const handleDeleteReport = async (reportId: string) => {
+    const target = accomplishmentReports.find((r) => r.id === reportId);
+    setAccomplishmentReports((prev) => prev.filter((r) => r.id !== reportId));
+
+    try {
+      await deleteAccomplishmentFromSupabase(
+        reportId,
+        target?.studentId,
+        target?.date
+      );
+    } catch (err) {
+      console.error('Failed to unsubmit report from Supabase:', err);
+    }
+
+    await refreshData();
+  };
+
   const handleRunAnomalyDetection = async (studentId?: string) => {
     setIsRunningDetection(true);
     try {
@@ -1487,6 +1505,7 @@ export default function App() {
                   onSubmitReport={handleSubmitReport}
                   onCancelEnrollment={handleCancelEnrollment}
                   coordinatorName={activeUser.role === 'coordinator' ? activeUser.fullName : undefined}
+                  onRefreshData={refreshData}
                 />
               )}
 
@@ -1563,6 +1582,7 @@ export default function App() {
                   onTriggerGroupSummary={handleTriggerGroupSummary}
                   isCoordinator={isCoordinator}
                   attendanceLogs={attendanceLogs}
+                  onDeleteReport={handleDeleteReport}
                 />
               )}
 
