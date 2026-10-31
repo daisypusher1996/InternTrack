@@ -22,7 +22,7 @@ import {
 import { Company, Student, BU_COURSES } from '../types';
 import { ThemeToggle } from './ThemeToggle';
 import FoldText from './FoldText';
-import Grainient from './Grainient';
+import Threads from './Threads';
 import {
   signInWithGoogle,
   checkGoogleOAuthStatus,
@@ -424,20 +424,35 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           Modeled after https://ibu.bicol-u.edu.ph/sign-in
          ========================================================================= */}
       <div className="hidden lg:flex lg:w-7/12 xl:w-3/5 bg-gradient-to-br from-[#06142e] via-[#0b2545] to-[#040d1a] relative overflow-hidden flex-col justify-between p-12 xl:p-16 text-white border-r border-slate-800">
-        {/* Flowing Grainy Gradient Background Effect */}
-        <div className="absolute inset-0 w-full h-full z-0 overflow-hidden pointer-events-none opacity-85">
-          <Grainient
-            colors={["#9e2c00", "#20120b", "#0f0825", "#0c0819", "#060815"]}
-            angle={114}
-            flow={0.75}
-            silk={0.48}
-            grainAmount={0.08}
+        {/* WebGL Threads background animation under texts and logos */}
+        <div className="absolute inset-0 z-0 pointer-events-none opacity-85">
+          <Threads
+            color={[0.23, 0.51, 0.96]}
+            accentColor={[0.95, 0.4, 0.13]}
+            amplitude={1.7}
+            distance={0.4}
+            enableMouseInteraction={true}
+            lineCount={90}
+            thickness={0.6}
+            softness={1.3}
+            speed={0.6}
+            waves={1.05}
+            split={0.04}
+            fray={0.5}
+            angle={25}
+            seed={0}
+            parting={0}
+            taper={0.85}
+            brightness={1.4}
+            fade={0}
+            opacity={0.85}
+            paused={false}
           />
         </div>
 
         {/* Decorative background glow accents */}
-        <div className="absolute -top-32 -left-32 w-96 h-96 bg-[#F26522]/15 rounded-full blur-3xl pointer-events-none z-1" />
-        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl pointer-events-none z-1" />
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-[#F26522]/15 rounded-full blur-3xl pointer-events-none z-0" />
+        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl pointer-events-none z-0" />
 
         {/* Top Header Badge */}
         <div className="relative z-10 space-y-4">
