@@ -17,6 +17,7 @@ import {
 } from './icons';
 import { Student, AttendanceLog, AccomplishmentReport } from '../types';
 import { requestOvertimeToSupabase, markFridayWfhInSupabase } from '../lib/supabase';
+import { normalizeDateToYMD } from '../lib/attendanceUtils';
 
 interface CalendarVisualProps {
   student: Student;
@@ -161,11 +162,20 @@ export const CalendarVisual: React.FC<CalendarVisualProps> = ({
       };
     }
 
-    const report = accomplishmentReports.find(
-      (r) =>
-        r.studentId === student.id &&
-        (r.date === dateStr || r.date === isoDateStr || r.date.includes(`${monthNames[month]} ${day}`))
-    );
+    const report = accomplishmentReports.find((r) => {
+      const isStudentMatch =
+        r.studentId === student.id ||
+        (student.buId && r.studentIdNumber && r.studentIdNumber.toLowerCase().trim() === student.buId.toLowerCase().trim()) ||
+        (student.fullName && r.studentName && r.studentName.toLowerCase().trim() === student.fullName.toLowerCase().trim());
+      if (!isStudentMatch) return false;
+      const rYMD = normalizeDateToYMD(r.date);
+      return (
+        rYMD === isoDateStr ||
+        r.date === dateStr ||
+        r.date === isoDateStr ||
+        r.date.includes(`${monthNames[month]} ${day}`)
+      );
+    });
 
     return { dateStr, dateObj, isoDateStr, log, report, isWfh, isWeekend, isFriday };
   };

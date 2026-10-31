@@ -41,6 +41,7 @@ import {
   updateStudentScheduleInSupabase,
   fetchStudentRegisteredCompany,
 } from '../lib/supabase';
+import { normalizeDateToYMD } from '../lib/attendanceUtils';
 
 interface StudentPortalViewProps {
   currentUser: User;
@@ -208,11 +209,25 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
     }
   };
 
-  // Filter logs & reports for this student
-  const studentLogs = attendanceLogs.filter((l) => l.studentId === student.id);
-  const studentReports = accomplishmentReports.filter((r) => r.studentId === student.id);
+  // Filter logs & reports for this student with robust ID/Name/BU ID matching
+  const studentLogs = attendanceLogs.filter(
+    (l) =>
+      l.studentId === student.id ||
+      (currentUser?.id && l.studentId === currentUser.id) ||
+      (student.buId && l.studentIdNumber && l.studentIdNumber.toLowerCase().trim() === student.buId.toLowerCase().trim()) ||
+      (student.fullName && l.studentName && l.studentName.toLowerCase().trim() === student.fullName.toLowerCase().trim())
+  );
+  const studentReports = accomplishmentReports.filter(
+    (r) =>
+      r.studentId === student.id ||
+      (currentUser?.id && r.studentId === currentUser.id) ||
+      (student.buId && r.studentIdNumber && r.studentIdNumber.toLowerCase().trim() === student.buId.toLowerCase().trim()) ||
+      (student.fullName && r.studentName && r.studentName.toLowerCase().trim() === student.fullName.toLowerCase().trim())
+  );
   const studentAlerts = alerts.filter(
-    (a) => a.studentId === student.id && a.status === 'pending_review'
+    (a) =>
+      (a.studentId === student.id || (currentUser?.id && a.studentId === currentUser.id)) &&
+      a.status === 'pending_review'
   );
 
   const percentCompleted = Math.min(
@@ -225,6 +240,9 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
   const isApproved = student.enrollmentStatus === 'approved';
   const isEnrollmentPending = student.enrollmentStatus === 'pending_approval';
   const isEnrollmentDeclined = student.enrollmentStatus === 'declined';
+
+  // Standardize today's date for accurate day comparison
+  const todayYMD = normalizeDateToYMD(new Date().toISOString());
 
   // Calculate unaccomplished / forgotten required tasks
   const unaccomplishedTasks = [];
@@ -257,11 +275,22 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
     });
   }
 
-  // Check if today has a log but no accomplishment report filed
-  const todayReport = studentReports.find(
-    (r) => r.date === todayStr || r.date.includes(todayStr.split(',')[0])
-  );
-  if (todayRecords.length > 0 && !todayReport) {
+  // Check if today has a report filed by the student
+  const todayReport = studentReports.find((r) => {
+    const repDateYMD = normalizeDateToYMD(r.date);
+    if (repDateYMD && repDateYMD === todayYMD) return true;
+    if (r.date === todayStr || r.date === todayYMD) return true;
+    if (r.date && (r.date.includes(todayStr) || todayStr.includes(r.date))) return true;
+    return false;
+  });
+
+  // Check if today has active duty hours recorded (from state machine or attendance logs)
+  const hasDutyToday =
+    todayRecords.length > 0 ||
+    studentLogs.some((l) => normalizeDateToYMD(l.date) === todayYMD);
+
+  // Only prompt for accomplishment report if duty was performed today and no report has been submitted yet
+  if (hasDutyToday && !todayReport) {
     unaccomplishedTasks.push({
       id: 'task-report',
       type: 'report',
@@ -271,7 +300,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
         'You have active duty hours recorded for today. Please document your technical tasks and competencies.',
       actionText: 'Submit Daily Report',
       onClick: () => {
-        setReportDate(todayStr);
+        setReportDate(todayYMD);
         setIsReportModalOpen(true);
       },
     });
@@ -358,7 +387,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
         await onSubmitReport({
           studentId: student.id,
           groupId: student.groupId,
-          date: reportDate,
+          date: normalizeDateToYMD(reportDate) || todayYMD,
           workCategory: reportCategory,
           taskTitle: reportTitle,
           taskDescription: reportDescription,
@@ -368,6 +397,9 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
         });
       }
       setReportSuccessFeedback(`Accomplishment report "${reportTitle}" filed successfully!`);
+      if (onRefreshData) {
+        await onRefreshData();
+      }
       setTimeout(() => {
         setReportSuccessFeedback(null);
         setIsReportModalOpen(false);
@@ -375,7 +407,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
         setReportDescription('');
         setReportSupervisorDuty('');
         setReportObstacles('');
-      }, 2500);
+      }, 2000);
     } catch (err) {
       console.error(err);
     } finally {
@@ -896,7 +928,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
           <div className="space-y-2 pt-1">
             <button
               onClick={() => {
-                setReportDate(todayStr);
+                setReportDate(todayYMD);
                 setIsReportModalOpen(true);
               }}
               className="w-full py-2.5 px-3 rounded-xl bg-[#F26522] hover:bg-[#D94B0A] text-white font-bold text-xs transition-all duration-150 active:scale-95 shadow-sm flex items-center justify-center gap-2 cursor-pointer"

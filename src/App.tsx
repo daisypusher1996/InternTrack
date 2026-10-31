@@ -100,6 +100,46 @@ export default function App() {
   const [isRunningDetection, setIsRunningDetection] = useState<boolean>(false);
   const [isSummarizing, setIsSummarizing] = useState<boolean>(false);
 
+  // Synchronize and initialize user theme preference from localStorage on initial render
+  useEffect(() => {
+    const initializeTheme = () => {
+      try {
+        const storedTheme = localStorage.getItem('theme') || localStorage.getItem('bu_intern_theme');
+        const isDark = storedTheme
+          ? storedTheme === 'dark'
+          : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+        if (isDark) {
+          document.documentElement.classList.add('dark');
+          localStorage.setItem('theme', 'dark');
+          localStorage.setItem('bu_intern_theme', 'dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+          localStorage.setItem('theme', 'light');
+          localStorage.setItem('bu_intern_theme', 'light');
+        }
+      } catch (err) {
+        console.warn('Failed to initialize theme from localStorage:', err);
+      }
+    };
+
+    initializeTheme();
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'theme' || e.key === 'bu_intern_theme') {
+        initializeTheme();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('theme-change', initializeTheme);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('theme-change', initializeTheme);
+    };
+  }, []);
+
   // Refresh data from full-stack Express API
   const refreshData = async () => {
     const safeFetch = async (url: string, fallback: any = []) => {

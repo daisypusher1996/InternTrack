@@ -9,20 +9,54 @@ interface ThemeToggleProps {
 export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '', showLabel = false }) => {
   const [isDark, setIsDark] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
-    const stored = localStorage.getItem('bu_intern_theme');
+    const stored = localStorage.getItem('theme') || localStorage.getItem('bu_intern_theme');
     if (stored) return stored === 'dark';
-    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return (
+      document.documentElement.classList.contains('dark') ||
+      (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    );
   });
+
+  const applyTheme = (dark: boolean) => {
+    setIsDark(dark);
+    if (dark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+      localStorage.setItem('bu_intern_theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+      localStorage.setItem('bu_intern_theme', 'light');
+    }
+    window.dispatchEvent(new CustomEvent('theme-change', { detail: { isDark: dark } }));
+  };
 
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
       localStorage.setItem('bu_intern_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
       localStorage.setItem('bu_intern_theme', 'light');
     }
   }, [isDark]);
+
+  useEffect(() => {
+    const handleSync = () => {
+      const stored = localStorage.getItem('theme') || localStorage.getItem('bu_intern_theme');
+      const activeDark = stored ? stored === 'dark' : document.documentElement.classList.contains('dark');
+      setIsDark(activeDark);
+    };
+
+    window.addEventListener('storage', handleSync);
+    window.addEventListener('theme-change', handleSync);
+    return () => {
+      window.removeEventListener('storage', handleSync);
+      window.removeEventListener('theme-change', handleSync);
+    };
+  }, []);
 
   if (showLabel) {
     return (
@@ -33,7 +67,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '', showLa
       >
         <button
           type="button"
-          onClick={() => setIsDark(false)}
+          onClick={() => applyTheme(false)}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
             !isDark
               ? 'bg-white text-slate-900 shadow-sm'
@@ -47,7 +81,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '', showLa
 
         <button
           type="button"
-          onClick={() => setIsDark(true)}
+          onClick={() => applyTheme(true)}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
             isDark
               ? 'bg-slate-800 text-white shadow-sm ring-1 ring-slate-700'
@@ -70,7 +104,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '', showLa
     >
       <button
         type="button"
-        onClick={() => setIsDark(false)}
+        onClick={() => applyTheme(false)}
         className={`p-1.5 rounded-lg transition-all cursor-pointer ${
           !isDark
             ? 'bg-white text-amber-500 shadow-sm scale-105'
@@ -84,7 +118,7 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className = '', showLa
 
       <button
         type="button"
-        onClick={() => setIsDark(true)}
+        onClick={() => applyTheme(true)}
         className={`p-1.5 rounded-lg transition-all cursor-pointer ${
           isDark
             ? 'bg-slate-800 text-sky-400 shadow-sm ring-1 ring-slate-700 scale-105'
