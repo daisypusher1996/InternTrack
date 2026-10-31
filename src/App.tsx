@@ -38,6 +38,7 @@ import {
   ClassBatch,
   User,
 } from './types';
+import { normalizeDateToYMD } from './lib/attendanceUtils';
 import {
   supabase,
   extractStudentIdFromEmail,
@@ -145,7 +146,23 @@ export default function App() {
       setGroups(groupsRes);
       setCompanies(companiesRes);
       setAttendanceLogs(attendanceRes);
-      setAccomplishmentReports(reportsRes);
+
+      // Deduplicate accomplishment reports so strictly 1 report per student per day is retained
+      const deduplicatedReports: AccomplishmentReport[] = [];
+      const seenReports = new Set<string>();
+      if (Array.isArray(reportsRes)) {
+        for (const rep of reportsRes) {
+          const studentKey = (rep.studentId || rep.studentName || '').toLowerCase().trim();
+          const dateKey = normalizeDateToYMD(rep.date);
+          const compKey = `${studentKey}:::${dateKey}`;
+          if (!seenReports.has(compKey)) {
+            seenReports.add(compKey);
+            deduplicatedReports.push(rep);
+          }
+        }
+      }
+      setAccomplishmentReports(deduplicatedReports);
+
       setAlerts(alertsRes);
       setSummaries(summariesRes);
       setBatches(batchesRes);
@@ -1119,27 +1136,32 @@ export default function App() {
   };
 
   const handleSubmitReport = async (reportData: any) => {
+    const payload = {
+      ...reportData,
+      date: reportData.date || new Date().toISOString().split('T')[0],
+    };
+
     const res = await fetch('/api/accomplishments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(reportData),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error('Failed to submit report');
 
     await syncAccomplishmentToSupabase({
-      studentId: reportData.studentId,
-      studentName: reportData.studentName || (loggedInStudent?.fullName || 'Student'),
-      companyId: reportData.companyId,
-      companyName: reportData.companyName,
-      date: reportData.date || new Date().toISOString().split('T')[0],
-      weekNumber: reportData.weekNumber || 1,
-      workCategory: reportData.workCategory,
-      taskTitle: reportData.taskTitle,
-      taskDescription: reportData.taskDescription,
-      supervisorAssignedDuty: reportData.supervisorAssignedDuty,
-      hoursSpent: Number(reportData.hoursSpent) || 0,
-      taskStatus: reportData.taskStatus || 'completed',
-      obstaclesFaced: reportData.obstaclesFaced,
+      studentId: payload.studentId,
+      studentName: payload.studentName || (loggedInStudent?.fullName || 'Student'),
+      companyId: payload.companyId,
+      companyName: payload.companyName,
+      date: payload.date,
+      weekNumber: payload.weekNumber || 1,
+      workCategory: payload.workCategory,
+      taskTitle: payload.taskTitle,
+      taskDescription: payload.taskDescription,
+      supervisorAssignedDuty: payload.supervisorAssignedDuty,
+      hoursSpent: Number(payload.hoursSpent) || 0,
+      taskStatus: payload.taskStatus || 'completed',
+      obstaclesFaced: payload.obstaclesFaced,
     }).catch((err) => console.error('Supabase accomplishment sync failed:', err));
 
     await refreshData();

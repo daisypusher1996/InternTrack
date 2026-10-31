@@ -25,6 +25,7 @@ import {
 import { Student, AccomplishmentReport, Group, AttendanceLog, AISummary } from '../types';
 import { BUAccomplishmentExportModal } from './BUAccomplishmentExportModal';
 import { deleteAccomplishmentFromSupabase } from '../lib/supabase';
+import { normalizeDateToYMD } from '../lib/attendanceUtils';
 
 interface AccomplishmentLoggerProps {
   students: Student[];
@@ -150,6 +151,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
         studentName: effectiveStudent.fullName,
         companyId: effectiveStudent.companyId,
         companyName: effectiveStudent.companyName,
+        date: new Date().toISOString().split('T')[0],
         workCategory,
         taskTitle,
         taskDescription,
@@ -172,18 +174,119 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
     }
   };
 
-  const filteredReports = localReports.filter((r) => {
-    const matchesCat = categoryFilter === 'all' || r.workCategory === categoryFilter;
-    const matchesSearch =
-      r.taskTitle.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      r.taskDescription.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      r.studentName.toLowerCase().includes(searchFilter.toLowerCase()) ||
-      r.companyName.toLowerCase().includes(searchFilter.toLowerCase());
-    return matchesCat && matchesSearch;
-  });
+  // Filter students strictly to only those under this coordinator's supervision
+  const assignedStudents = React.useMemo(() => {
+    if (!isCoordinator || !currentUser) return students;
+    return students.filter((s) => {
+      if (s.coordinatorId && s.coordinatorId === currentUser.id) return true;
+      if (
+        s.coordinatorName &&
+        currentUser.fullName &&
+        s.coordinatorName.toLowerCase().trim() === currentUser.fullName.toLowerCase().trim()
+      ) {
+        return true;
+      }
+      if (
+        s.coordinatorEmail &&
+        currentUser.email &&
+        s.coordinatorEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim()
+      ) {
+        return true;
+      }
+      // If student has no designated coordinator, display under current coordinator so they don't get lost
+      if (!s.coordinatorId && !s.coordinatorName && !s.coordinatorEmail) {
+        return true;
+      }
+      return false;
+    });
+  }, [students, currentUser, isCoordinator]);
 
-  const totalHoursLogged = localReports.reduce((acc, r) => acc + (Number(r.hoursSpent) || 0), 0);
-  const uniqueStudentContributors = new Set(localReports.map((r) => r.studentId)).size;
+  const assignedStudentIds = React.useMemo(() => {
+    return new Set(assignedStudents.map((s) => s.id));
+  }, [assignedStudents]);
+
+  const assignedStudentNames = React.useMemo(() => {
+    return new Set(assignedStudents.map((s) => s.fullName.toLowerCase().trim()));
+  }, [assignedStudents]);
+
+  const currentStudentId = effectiveStudent?.id || currentStudent?.id || currentUser?.id;
+  const currentStudentName = (effectiveStudent?.fullName || currentStudent?.fullName || currentUser?.fullName || '').toLowerCase().trim();
+  const currentStudentEmail = (effectiveStudent?.email || currentStudent?.email || currentUser?.email || '').toLowerCase().trim();
+  const currentStudentBuId = (effectiveStudent?.buId || currentStudent?.buId || currentUser?.buId || '').toLowerCase().trim();
+
+  // Scope and deduplicate reports: 1 report per student per day, and strict role isolation
+  const scopedReports = React.useMemo(() => {
+    const rawScoped = localReports.filter((r) => {
+      if (isCoordinator) {
+        // Coordinator sees reports of their registered students
+        if (assignedStudentIds.has(r.studentId)) return true;
+        if (r.studentName && assignedStudentNames.has(r.studentName.toLowerCase().trim())) return true;
+        const matchedStudent = students.find((s) => s.id === r.studentId);
+        if (
+          matchedStudent &&
+          ((matchedStudent.coordinatorId && matchedStudent.coordinatorId === currentUser?.id) ||
+            (matchedStudent.coordinatorName &&
+              currentUser?.fullName &&
+              matchedStudent.coordinatorName.toLowerCase().trim() === currentUser.fullName.toLowerCase().trim()) ||
+            (!matchedStudent.coordinatorId && !matchedStudent.coordinatorName))
+        ) {
+          return true;
+        }
+        return false;
+      } else {
+        // Student sees strictly only their own reports
+        if (currentStudentId && r.studentId === currentStudentId) return true;
+        if (currentStudentName && r.studentName && r.studentName.toLowerCase().trim() === currentStudentName) return true;
+        if (currentStudentBuId && r.studentIdNumber && r.studentIdNumber.toLowerCase().trim() === currentStudentBuId) return true;
+        const matchedStudent = students.find((s) => s.id === r.studentId);
+        if (matchedStudent && currentStudentEmail && matchedStudent.email.toLowerCase().trim() === currentStudentEmail) return true;
+        return false;
+      }
+    });
+
+    // Deduplicate: strictly 1 report per student per day
+    const deduplicatedMap = new Map<string, AccomplishmentReport>();
+    for (const rep of rawScoped) {
+      const studentKey = (rep.studentId || rep.studentName || '').toLowerCase().trim();
+      const dateKey = normalizeDateToYMD(rep.date);
+      const compositeKey = `${studentKey}:::${dateKey}`;
+      if (!deduplicatedMap.has(compositeKey)) {
+        deduplicatedMap.set(compositeKey, rep);
+      }
+    }
+    return Array.from(deduplicatedMap.values());
+  }, [
+    localReports,
+    isCoordinator,
+    assignedStudentIds,
+    assignedStudentNames,
+    currentStudentId,
+    currentStudentName,
+    currentStudentBuId,
+    currentStudentEmail,
+    students,
+    currentUser,
+  ]);
+
+  const filteredReports = React.useMemo(() => {
+    return scopedReports.filter((r) => {
+      const matchesCat = categoryFilter === 'all' || r.workCategory === categoryFilter;
+      const matchesSearch =
+        r.taskTitle.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        r.taskDescription.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        r.studentName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        r.companyName.toLowerCase().includes(searchFilter.toLowerCase());
+      return matchesCat && matchesSearch;
+    });
+  }, [scopedReports, categoryFilter, searchFilter]);
+
+  const totalHoursLogged = React.useMemo(() => {
+    return scopedReports.reduce((acc, r) => acc + (Number(r.hoursSpent) || 0), 0);
+  }, [scopedReports]);
+
+  const uniqueStudentContributors = React.useMemo(() => {
+    return new Set(scopedReports.map((r) => r.studentId)).size;
+  }, [scopedReports]);
 
   return (
     <div className="space-y-6">
@@ -273,7 +376,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               Total Reports Filed
             </div>
             <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-              {accomplishmentReports.length}
+              {scopedReports.length}
             </div>
             <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5">
               Verified daily logs
@@ -297,7 +400,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               Active Intern Contributors
             </div>
             <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-              {uniqueStudentContributors} <span className="text-sm font-semibold text-slate-500">/ {students.length}</span>
+              {uniqueStudentContributors} <span className="text-sm font-semibold text-slate-500">/ {assignedStudents.length}</span>
             </div>
             <div className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-0.5">
               Contributing students
@@ -631,7 +734,9 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               <span>Accomplishment History Logbook ({filteredReports.length})</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Verified daily task entries submitted across all cohort deployments.
+              {isCoordinator
+                ? 'Verified daily task entries submitted by your registered student interns.'
+                : 'Your verified daily task entries recorded for practicum verification.'}
             </p>
           </div>
 
@@ -728,24 +833,26 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5 mt-2.5">
-                    <button
-                      onClick={() => handleDeleteReport(report.id, report.studentId, report.date)}
-                      disabled={deletingId === report.id}
-                      className="px-2.5 py-1 text-[11px] font-semibold text-red-600 hover:text-white hover:bg-red-600 bg-red-50 dark:bg-red-950/60 dark:hover:bg-red-600 border border-red-200 dark:border-red-900 rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-2xs hover:shadow-xs"
-                      title="Unsubmit and delete this accomplishment record from logbook"
-                    >
-                      {deletingId === report.id ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
-                          <span>Deleting...</span>
-                        </>
-                      ) : (
-                        <>
-                          <BauhausTrash2 className="w-3 h-3" />
-                          <span>Unsubmit</span>
-                        </>
-                      )}
-                    </button>
+                    {!isCoordinator && (
+                      <button
+                        onClick={() => handleDeleteReport(report.id, report.studentId, report.date)}
+                        disabled={deletingId === report.id}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-red-600 hover:text-white hover:bg-red-600 bg-red-50 dark:bg-red-950/60 dark:hover:bg-red-600 border border-red-200 dark:border-red-900 rounded-lg transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-2xs hover:shadow-xs"
+                        title="Unsubmit and delete this accomplishment record from logbook"
+                      >
+                        {deletingId === report.id ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+                            <span>Deleting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <BauhausTrash2 className="w-3 h-3" />
+                            <span>Unsubmit</span>
+                          </>
+                        )}
+                      </button>
+                    )}
 
                     {!isCoordinator && (
                       <button
@@ -775,7 +882,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
         students={students}
         initialStudentId={exportTargetStudentId || currentStudent?.id || students[0]?.id}
         attendanceLogs={attendanceLogs}
-        accomplishmentReports={accomplishmentReports}
+        accomplishmentReports={scopedReports}
         isCoordinator={isCoordinator}
       />
     </div>

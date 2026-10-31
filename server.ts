@@ -865,17 +865,43 @@ async function syncAccomplishmentServer(rep: AccomplishmentReport) {
       return;
     }
 
-    // 1. Primary: sync to accomplishment_reports table in Supabase
+    // 1. Primary: sync to accomplishment_reports table in Supabase with duplicate prevention
     try {
       const isoDate = toIsoDate(rep.date);
-      await supabase.from('accomplishment_reports').insert({
-        student_id: studentUuid,
-        week_start: isoDate,
-        week_end: isoDate,
-        raw_task_logs: `${rep.workCategory}: ${rep.taskTitle} - ${rep.taskDescription} (${rep.hoursSpent}h rendered)`,
-        nlp_summary: rep.obstaclesFaced || rep.taskDescription || rep.taskTitle,
-        status: rep.taskStatus === 'completed' ? 'Approved' : 'Pending',
-      });
+      const { data: existingRows } = await supabase
+        .from('accomplishment_reports')
+        .select('id')
+        .eq('student_id', studentUuid)
+        .eq('week_start', isoDate);
+
+      if (existingRows && existingRows.length > 0) {
+        // Update existing record
+        await supabase
+          .from('accomplishment_reports')
+          .update({
+            week_end: isoDate,
+            raw_task_logs: `${rep.workCategory}: ${rep.taskTitle} - ${rep.taskDescription} (${rep.hoursSpent}h rendered)`,
+            nlp_summary: rep.obstaclesFaced || rep.taskDescription || rep.taskTitle,
+            status: rep.taskStatus === 'completed' ? 'Approved' : 'Pending',
+          })
+          .eq('id', existingRows[0].id);
+
+        // Delete any extra duplicate rows in DB if they exist
+        if (existingRows.length > 1) {
+          for (let i = 1; i < existingRows.length; i++) {
+            await supabase.from('accomplishment_reports').delete().eq('id', existingRows[i].id);
+          }
+        }
+      } else {
+        await supabase.from('accomplishment_reports').insert({
+          student_id: studentUuid,
+          week_start: isoDate,
+          week_end: isoDate,
+          raw_task_logs: `${rep.workCategory}: ${rep.taskTitle} - ${rep.taskDescription} (${rep.hoursSpent}h rendered)`,
+          nlp_summary: rep.obstaclesFaced || rep.taskDescription || rep.taskTitle,
+          status: rep.taskStatus === 'completed' ? 'Approved' : 'Pending',
+        });
+      }
     } catch (repErr) {
       console.warn('Supabase accomplishment_reports sync note:', repErr);
     }
@@ -1270,7 +1296,7 @@ async function loadInitialDataFromSupabase() {
         .select('*')
         .order('created_at', { ascending: false });
       if (repData && repData.length > 0) {
-        freshAccomplishmentReports = (repData.map((r: any) => {
+        const loadedReports = (repData.map((r: any) => {
           const matchedSt = freshStudents.find(s => s.id === r.student_id);
           // Strictly exclude reports for students who are not enrolled/approved
           if (!matchedSt || matchedSt.enrollmentStatus !== 'approved' || !matchedSt.deploymentApproved) {
@@ -1294,6 +1320,16 @@ async function loadInitialDataFromSupabase() {
             createdAt: r.created_at,
           };
         }).filter(Boolean) as AccomplishmentReport[]);
+
+        // Deduplicate so only 1 report per student per day is returned
+        const seenDayMap = new Map<string, AccomplishmentReport>();
+        for (const r of loadedReports) {
+          const dayKey = `${r.studentId}:::${toIsoDate(r.date)}`;
+          if (!seenDayMap.has(dayKey)) {
+            seenDayMap.set(dayKey, r);
+          }
+        }
+        freshAccomplishmentReports = Array.from(seenDayMap.values());
       }
     } catch {}
 
@@ -4179,11 +4215,12 @@ app.use((req, res, next) => {
       });
     }
 
-    const todayStr = date ? toIsoDate(date) : new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const todayStr = date ? toIsoDate(date) : toIsoDate(new Date().toISOString());
 
     // Single Daily Accomplishment Report Constraint: Check if report already exists for today
     let existingReport = accomplishmentReports.find(
-      (r) => r.studentId === student.id && (r.date === todayStr || toIsoDate(r.date) === toIsoDate(todayStr))
+      (r) => (r.studentId === student.id || r.studentName.toLowerCase() === student.fullName.toLowerCase()) &&
+             toIsoDate(r.date) === todayStr
     );
 
     if (existingReport) {

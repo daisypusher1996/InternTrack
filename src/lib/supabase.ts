@@ -1444,17 +1444,42 @@ export async function syncAccomplishmentToSupabase(report: {
 
     const isoDate = toIsoDate(report.date);
 
-    // 1. Sync to accomplishment_reports table (user's schema)
+    // 1. Sync to accomplishment_reports table (user's schema) with duplicate prevention
     if (studentUuid) {
       try {
-        await supabase.from('accomplishment_reports').insert({
-          student_id: studentUuid,
-          week_start: isoDate,
-          week_end: isoDate,
-          raw_task_logs: `${report.workCategory}: ${report.taskTitle} - ${report.taskDescription} (${report.hoursSpent}h rendered)`,
-          nlp_summary: report.obstaclesFaced || report.taskDescription || report.taskTitle,
-          status: report.taskStatus === 'completed' ? 'Approved' : 'Pending',
-        });
+        const { data: existingRows } = await supabase
+          .from('accomplishment_reports')
+          .select('id')
+          .eq('student_id', studentUuid)
+          .eq('week_start', isoDate);
+
+        if (existingRows && existingRows.length > 0) {
+          await supabase
+            .from('accomplishment_reports')
+            .update({
+              week_end: isoDate,
+              raw_task_logs: `${report.workCategory}: ${report.taskTitle} - ${report.taskDescription} (${report.hoursSpent}h rendered)`,
+              nlp_summary: report.obstaclesFaced || report.taskDescription || report.taskTitle,
+              status: report.taskStatus === 'completed' ? 'Approved' : 'Pending',
+            })
+            .eq('id', existingRows[0].id);
+
+          // Clean up any extra duplicates in DB
+          if (existingRows.length > 1) {
+            for (let i = 1; i < existingRows.length; i++) {
+              await supabase.from('accomplishment_reports').delete().eq('id', existingRows[i].id);
+            }
+          }
+        } else {
+          await supabase.from('accomplishment_reports').insert({
+            student_id: studentUuid,
+            week_start: isoDate,
+            week_end: isoDate,
+            raw_task_logs: `${report.workCategory}: ${report.taskTitle} - ${report.taskDescription} (${report.hoursSpent}h rendered)`,
+            nlp_summary: report.obstaclesFaced || report.taskDescription || report.taskTitle,
+            status: report.taskStatus === 'completed' ? 'Approved' : 'Pending',
+          });
+        }
       } catch (repErr) {
         console.warn('Sync to accomplishment_reports note:', repErr);
       }
