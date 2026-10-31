@@ -31,6 +31,8 @@ interface AccomplishmentLoggerProps {
   onTriggerGroupSummary: (groupId: string) => void;
   isCoordinator?: boolean;
   attendanceLogs?: AttendanceLog[];
+  currentUser?: any;
+  currentStudent?: Student;
 }
 
 export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
@@ -42,6 +44,8 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
   onTriggerGroupSummary,
   isCoordinator = false,
   attendanceLogs = [],
+  currentUser,
+  currentStudent,
 }) => {
   // Local reports state for immediate UI feedback on deletion
   const [localReports, setLocalReports] = useState<AccomplishmentReport[]>(accomplishmentReports);
@@ -54,8 +58,16 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
   // Modal state for exporting official BU forms
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportTargetStudentId, setExportTargetStudentId] = useState<string>('');
-  // Student Form State (only used if isCoordinator is false)
-  const [selectedStudentId, setSelectedStudentId] = useState(students[0]?.id || '');
+
+  // Securely resolve the authenticated student - strictly no dropdown selection
+  const effectiveStudent: Student =
+    currentStudent ||
+    (currentUser?.role === 'student'
+      ? students.find((s) => s.id === currentUser.id || s.email.toLowerCase() === currentUser.email.toLowerCase()) ||
+        currentUser.studentProfile ||
+        students[0]
+      : students[0]);
+
   const [workCategory, setWorkCategory] = useState<
     'System Testing & QA' | 'Documentation' | 'Frontend Dev' | 'Backend Dev' | 'Network & IT Support' | 'Data Analytics'
   >('System Testing & QA');
@@ -72,8 +84,6 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchFilter, setSearchFilter] = useState<string>('');
   const [selectedGroupSummary, setSelectedGroupSummary] = useState<string>(groups[0]?.id || '');
-
-  const currentStudent = students.find((s) => s.id === selectedStudentId) || students[0];
 
   const handleDeleteReport = async (reportId: string, studentId: string, date: string) => {
     const confirmDelete = window.confirm('Are you sure you want to unsubmit / delete this accomplishment report? This will remove the entry from the official logbook.');
@@ -102,7 +112,10 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
     setIsSubmitting(true);
     try {
       await onSubmitReport({
-        studentId: currentStudent.id,
+        studentId: effectiveStudent.id,
+        studentName: effectiveStudent.fullName,
+        companyId: effectiveStudent.companyId,
+        companyName: effectiveStudent.companyName,
         workCategory,
         taskTitle,
         taskDescription,
@@ -200,9 +213,9 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               </div>
             )}
 
-            {!isCoordinator && currentStudent?.groupId && (
+            {!isCoordinator && effectiveStudent?.groupId && (
               <button
-                onClick={() => onTriggerGroupSummary(currentStudent.groupId!)}
+                onClick={() => onTriggerGroupSummary(effectiveStudent.groupId!)}
                 className="px-4 py-2.5 rounded-lg bg-[#020617] hover:bg-slate-800 text-white text-xs font-bold transition-all active:scale-95 flex items-center gap-2 shadow-sm hover:shadow-md shrink-0 cursor-pointer"
               >
                 <Brain className="w-4 h-4 text-[#F26522]" />
@@ -295,29 +308,37 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
             </h2>
 
             <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-              {/* Student selection & assignment preview */}
-              <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-100 dark:border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex-1">
-                  <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Submitting Intern</label>
-                  <select
-                    value={selectedStudentId}
-                    onChange={(e) => setSelectedStudentId(e.target.value)}
-                    className="w-full p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-bold focus:ring-1 focus:ring-[#F26522]"
-                  >
-                    {students.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.fullName} ({s.buId}) - {s.companyName.split('(')[0]}
-                      </option>
-                    ))}
-                  </select>
+              {/* Authenticated Intern Identity (Secure - No Dropdown) */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-950/60 text-[#F26522] border border-orange-200 dark:border-orange-800 flex items-center justify-center font-bold text-sm shrink-0">
+                    {effectiveStudent.fullName.charAt(0)}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-slate-900 dark:text-white text-xs">
+                        {effectiveStudent.fullName}
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Authenticated Intern</span>
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                      BU ID: <strong className="text-slate-700 dark:text-slate-300">{effectiveStudent.buId || effectiveStudent.studentIdNumber || 'Verified'}</strong>
+                    </div>
+                  </div>
                 </div>
 
-                {currentStudent && (
-                  <div className="text-right sm:pl-4 sm:border-l border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
-                    <div className="font-semibold text-slate-800 dark:text-white">{currentStudent.companyName}</div>
-                    <div>Cohort: {currentStudent.groupName || 'Individual'}</div>
+                <div className="text-left sm:text-right sm:pl-4 sm:border-l border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
+                  <div className="font-bold text-slate-800 dark:text-white flex items-center sm:justify-end gap-1">
+                    <Building2 className="w-3.5 h-3.5 text-[#F26522]" />
+                    <span>{effectiveStudent.companyName}</span>
                   </div>
-                )}
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    Cohort: {effectiveStudent.groupName || 'Individual Practicum'}
+                  </div>
+                </div>
               </div>
 
               {/* Category and Hours */}

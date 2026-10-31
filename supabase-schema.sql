@@ -35,12 +35,33 @@ CREATE TABLE IF NOT EXISTS coordinators (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS companies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    branch VARCHAR(255),
+    sector VARCHAR(255) NOT NULL,
+    address TEXT,
+    contact_person VARCHAR(255),
+    contact_email VARCHAR(255),
+    contact_phone VARCHAR(50),
+    max_interns INTEGER DEFAULT 10,
+    current_interns INTEGER DEFAULT 0,
+    workstation_subnet VARCHAR(100) DEFAULT '192.168.10.0/24',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS students (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     auth_user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     coordinator_id UUID REFERENCES coordinators(id),
     batch_id UUID REFERENCES batches(id),
     group_id UUID REFERENCES groups(id),
+    company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+    company_name VARCHAR(255),
+    company_branch VARCHAR(255),
+    mentor_name VARCHAR(255),
+    duty_start VARCHAR(10) DEFAULT '08:00',
+    duty_end VARCHAR(10) DEFAULT '17:00',
     full_name VARCHAR(255) NOT NULL,
     required_hours DECIMAL(6, 2) DEFAULT 486.00,
     completed_hours DECIMAL(6, 2) DEFAULT 0.00,

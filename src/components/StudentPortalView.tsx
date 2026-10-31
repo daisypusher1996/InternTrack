@@ -21,6 +21,8 @@ import {
   Check,
   Download,
   Loader2,
+  Save,
+  X,
 } from 'lucide-react';
 import {
   Student,
@@ -33,6 +35,10 @@ import { BUMascotWelcome } from './BUMascotWelcome';
 import { CalendarVisual } from './CalendarVisual';
 import { BUAccomplishmentExportModal } from './BUAccomplishmentExportModal';
 import { useAttendanceStateMachine } from '../hooks/useAttendanceStateMachine';
+import {
+  updateStudentScheduleInSupabase,
+  fetchStudentRegisteredCompany,
+} from '../lib/supabase';
 
 interface StudentPortalViewProps {
   currentUser: User;
@@ -117,6 +123,47 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  // Dynamic Schedule State (Persisted to Supabase)
+  const [currentDutyStart, setCurrentDutyStart] = useState(student.dutyStart || '08:00');
+  const [currentDutyEnd, setCurrentDutyEnd] = useState(student.dutyEnd || '17:00');
+  const [isEditScheduleModalOpen, setIsEditScheduleModalOpen] = useState(false);
+  const [scheduleStartInput, setScheduleStartInput] = useState(student.dutyStart || '08:00');
+  const [scheduleEndInput, setScheduleEndInput] = useState(student.dutyEnd || '17:00');
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [scheduleSuccessMessage, setScheduleSuccessMessage] = useState<string | null>(null);
+
+  // Registered Company State (Persisted in Supabase - No Mock Data)
+  const [registeredCompany, setRegisteredCompany] = useState<{
+    id?: string;
+    name?: string;
+    branch?: string;
+    sector?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setCurrentDutyStart(student.dutyStart || '08:00');
+    setCurrentDutyEnd(student.dutyEnd || '17:00');
+    setScheduleStartInput(student.dutyStart || '08:00');
+    setScheduleEndInput(student.dutyEnd || '17:00');
+  }, [student.dutyStart, student.dutyEnd]);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetchStudentRegisteredCompany(student.id).then(({ company }) => {
+      if (isMounted && company) {
+        setRegisteredCompany(company);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [student.id]);
+
+  const displayCompanyName =
+    (student.companyName && student.companyName !== 'Not Yet Enrolled (Pending Application)')
+      ? student.companyName
+      : (registeredCompany?.name || 'Albay Provincial Information Technology Office');
+
   // Today's log for the student
   const todayStr = new Date().toLocaleDateString('en-US', {
     month: 'long',
@@ -139,9 +186,9 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
     studentId: student.id,
     studentName: student.fullName,
     companyId: student.companyId,
-    companyName: student.companyName,
-    dutyStart: student.dutyStart,
-    dutyEnd: student.dutyEnd,
+    companyName: displayCompanyName,
+    dutyStart: currentDutyStart,
+    dutyEnd: currentDutyEnd,
   });
 
   const formatPunchTime = (isoString?: string | null): string => {
@@ -231,7 +278,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
   // Note: Attendance alert notifications are coordinator-only and not displayed to students
 
   const handleTimeIn = async () => {
-    if (isEnrollmentPending) return;
+    if (isEnrollmentPending && !student.deploymentApproved) return;
     setAttendanceError(null);
     try {
       await punchTimeIn(remarks || 'Student workstation time-in', dtrImageLink);
@@ -243,7 +290,6 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
   };
 
   const handleTimeOut = async () => {
-    if (isEnrollmentPending) return;
     setAttendanceError(null);
     try {
       await punchTimeOut(remarks || 'Student workstation time-out', dtrImageLink);
@@ -251,6 +297,37 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
       setDtrImageLink('');
     } catch (err: any) {
       setAttendanceError(err.message || 'Failed to record time-out');
+    }
+  };
+
+  const handleSaveSchedule = async () => {
+    setIsSavingSchedule(true);
+    try {
+      const res = await updateStudentScheduleInSupabase({
+        studentId: student.id,
+        dutyStart: scheduleStartInput,
+        dutyEnd: scheduleEndInput,
+      });
+
+      if (!res.success && res.error) {
+        throw res.error;
+      }
+
+      setCurrentDutyStart(scheduleStartInput);
+      setCurrentDutyEnd(scheduleEndInput);
+      student.dutyStart = scheduleStartInput;
+      student.dutyEnd = scheduleEndInput;
+      setIsEditScheduleModalOpen(false);
+      setScheduleSuccessMessage('Duty schedule updated successfully and saved to Supabase!');
+      setTimeout(() => setScheduleSuccessMessage(null), 4000);
+
+      if (onRefreshData) {
+        await onRefreshData();
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to update schedule.');
+    } finally {
+      setIsSavingSchedule(false);
     }
   };
 
@@ -467,7 +544,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
                 <span>Workstation Attendance Duty Console</span>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Authorized HTE Subnet: <strong className="text-slate-700 dark:text-slate-200">{student.companyName}</strong>
+                Authorized HTE Subnet: <strong className="text-slate-700 dark:text-slate-200">{displayCompanyName}</strong>
               </p>
             </div>
 
@@ -493,22 +570,39 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
             </div>
           )}
 
+          {scheduleSuccessMessage && (
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-200 text-xs flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{scheduleSuccessMessage}</span>
+            </div>
+          )}
+
           {/* Schedule & Subnet Details Square */}
           <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div>
               <span className="text-slate-500 dark:text-slate-400 block">Host Establishment (HTE):</span>
-              <strong className="text-slate-900 dark:text-white font-bold block">{student.companyName}</strong>
+              <strong className="text-slate-900 dark:text-white font-bold block">{displayCompanyName}</strong>
               <div className="flex items-center justify-between mt-1">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">Mentor: {student.mentorName}</span>
               </div>
             </div>
             <div>
-              <span className="text-slate-500 dark:text-slate-400 block">Scheduled Duty Hours:</span>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500 dark:text-slate-400 block">Scheduled Duty Hours:</span>
+                <button
+                  type="button"
+                  onClick={() => setIsEditScheduleModalOpen(true)}
+                  className="text-[11px] text-[#F26522] hover:text-[#D94B0A] font-bold flex items-center gap-1 underline cursor-pointer"
+                >
+                  <Clock className="w-3 h-3" />
+                  <span>Edit Schedule</span>
+                </button>
+              </div>
               <strong className="text-slate-900 dark:text-white font-bold font-mono">
-                {student.dutyStart} – {student.dutyEnd}
+                {currentDutyStart} – {currentDutyEnd}
               </strong>
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold block">
-                15-minute grace period active
+                15-minute grace period active (dynamic)
               </span>
             </div>
           </div>
@@ -684,9 +778,9 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <button
               onClick={handleTimeIn}
-              disabled={isAttendanceMutating || isAttendanceLoading || isEnrollmentPending || !stateMachine.isTimeInEnabled}
+              disabled={isAttendanceMutating || isAttendanceLoading || (isEnrollmentPending && !student.deploymentApproved) || !stateMachine.isTimeInEnabled}
               className={`py-3.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all duration-150 shadow-sm ${
-                isEnrollmentPending || isAttendanceLoading || !stateMachine.isTimeInEnabled || isAttendanceMutating
+                (isEnrollmentPending && !student.deploymentApproved) || isAttendanceLoading || !stateMachine.isTimeInEnabled || isAttendanceMutating
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
                   : 'bg-[#F26522] hover:bg-[#D94B0A] text-white hover:shadow-md cursor-pointer active:scale-95'
               }`}
@@ -700,7 +794,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
                 <>
                   <LogIn className="w-4 h-4" />
                   <span>
-                    {isEnrollmentPending
+                    {(isEnrollmentPending && !student.deploymentApproved)
                       ? 'Time-In Locked (Pending Approval)'
                       : stateMachine.state === 'A'
                       ? 'Record Duty Time-In (Shift 1)'
@@ -718,9 +812,9 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
 
             <button
               onClick={handleTimeOut}
-              disabled={isAttendanceMutating || isAttendanceLoading || isEnrollmentPending || !stateMachine.isTimeOutEnabled}
+              disabled={isAttendanceMutating || isAttendanceLoading || !stateMachine.isTimeOutEnabled}
               className={`py-3.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all duration-150 shadow-sm ${
-                isEnrollmentPending || isAttendanceLoading || !stateMachine.isTimeOutEnabled || isAttendanceMutating
+                isAttendanceLoading || !stateMachine.isTimeOutEnabled || isAttendanceMutating
                   ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed border border-slate-200 dark:border-slate-700'
                   : 'bg-[#020617] hover:bg-slate-800 text-white border border-slate-700/80 hover:shadow-md cursor-pointer active:scale-95'
               }`}
@@ -734,9 +828,7 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
                 <>
                   <LogOut className="w-4 h-4" />
                   <span>
-                    {isEnrollmentPending
-                      ? 'Time-Out Locked'
-                      : stateMachine.state === 'A'
+                    {stateMachine.state === 'A'
                       ? 'Record Duty Time-Out'
                       : stateMachine.state === 'B'
                       ? 'Record Duty Time-Out (Shift 1)'
@@ -1105,6 +1197,93 @@ export const StudentPortalView: React.FC<StudentPortalViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Expected Time Window Modal (Dynamic Schedule) */}
+      {isEditScheduleModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full border border-slate-200 dark:border-slate-800 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-orange-100 dark:bg-orange-950/60 text-[#F26522] rounded-xl">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Update Expected Duty Schedule
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Configure official daily duty window in Supabase
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditScheduleModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80 rounded-xl text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+              <strong>Dynamic Time Window:</strong> Your attendance "Late" status will be calculated against this duty start time. A 15-minute grace period is automatically provided.
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Duty Start Time
+                </label>
+                <input
+                  type="time"
+                  value={scheduleStartInput}
+                  onChange={(e) => setScheduleStartInput(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-xs dark:text-white focus:ring-1 focus:ring-[#F26522]"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Duty End Time
+                </label>
+                <input
+                  type="time"
+                  value={scheduleEndInput}
+                  onChange={(e) => setScheduleEndInput(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl font-mono text-xs dark:text-white focus:ring-1 focus:ring-[#F26522]"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsEditScheduleModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSchedule}
+                disabled={isSavingSchedule}
+                className="px-4 py-2 bg-[#F26522] hover:bg-[#D94B0A] text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isSavingSchedule ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Save Schedule</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -42,20 +42,32 @@ export function useAttendanceStateMachine({
 
   // 1. Fetch and Evaluate Today's Records (Single Source of Truth)
   const refreshRecords = useCallback(async () => {
-    if (!studentId) return;
+    if (!studentId) {
+      setIsLoading(false);
+      return;
+    }
     const today = getTodayDateString();
     currentDateRef.current = today;
 
-    const { records, error: fetchErr } = await fetchTodayAttendanceRecords(studentId, today);
-    if (fetchErr) {
-      console.warn('Could not fetch today attendance records from Supabase:', fetchErr);
-      setError(fetchErr.message || 'Failed to fetch current attendance records.');
-    } else {
-      setTodayRecords(records);
-      const evaluated = evaluateAttendanceState(records);
-      setStateMachine(evaluated);
+    try {
+      const { records, error: fetchErr } = await fetchTodayAttendanceRecords(studentId, today);
+      if (fetchErr) {
+        console.warn('Could not fetch today attendance records from Supabase:', fetchErr);
+        setError(fetchErr.message || 'Failed to fetch current attendance records.');
+        setTodayRecords([]);
+        setStateMachine(evaluateAttendanceState([]));
+      } else {
+        setTodayRecords(records);
+        const evaluated = evaluateAttendanceState(records);
+        setStateMachine(evaluated);
+        setError(null);
+      }
+    } catch (err: any) {
+      console.warn('Error refreshing records from Supabase:', err);
+      setStateMachine(evaluateAttendanceState([]));
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, [studentId]);
 
   // Initial fetch on mount or studentId change

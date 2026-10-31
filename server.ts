@@ -947,6 +947,15 @@ async function loadInitialDataFromSupabase() {
       const degreeInfo = resolveDegreeInfo(meta.class_block);
       const matchingCoord = freshUsers.find(u => u.id === s.coordinator_id) || coordList.find(c => c.id === s.coordinator_id || c.auth_user_id === s.coordinator_id);
 
+      const compId = s.company_id || meta.company_id || '';
+      const resolvedComp = companies.find((c) => c.id === compId || c.name === meta.company_name);
+      const resolvedCompName =
+        (meta.company_name && meta.company_name !== 'Not Yet Enrolled (Pending Application)')
+          ? meta.company_name
+          : (resolvedComp?.name || s.company_name || 'Not Yet Enrolled (Pending Application)');
+      const resolvedBranch = meta.company_branch || resolvedComp?.branch || s.company_branch || '';
+      const resolvedMentor = meta.mentor_name || resolvedComp?.contactPerson || s.mentor_name || 'Unassigned';
+
       // Add to freshUsers
       if (!freshUsers.some(u => u.email.toLowerCase() === cleanEmail)) {
         freshUsers.push({
@@ -974,22 +983,22 @@ async function loadInitialDataFromSupabase() {
         classBlock: meta.class_block || '',
         batchId: s.batch_id || 'batch-1',
         enrollmentType: (s.group_id || meta.group_id) ? 'group' : 'individual',
-        companyId: meta.company_id || '',
-        companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
-        companyBranch: meta.company_branch || '',
-        mentorName: meta.mentor_name || 'Unassigned',
+        companyId: compId,
+        companyName: resolvedCompName,
+        companyBranch: resolvedBranch,
+        mentorName: resolvedMentor,
         coordinatorId: s.coordinator_id || meta.coordinator_id || undefined,
         coordinatorName: matchingCoord ? (matchingCoord.full_name || matchingCoord.fullName) : undefined,
         coordinatorEmail: matchingCoord?.email || undefined,
-        dutyStart: meta.duty_start || '08:00',
-        dutyEnd: meta.duty_end || '17:00',
+        dutyStart: s.duty_start || meta.duty_start || '08:00',
+        dutyEnd: s.duty_end || meta.duty_end || '17:00',
         dutyDays: meta.duty_days || 'Mon,Tue,Wed,Thu,Fri',
         targetHours: Number(s.required_hours) || 240,
         renderedHours: Number(s.completed_hours) || 0,
         attendanceRate: 100,
         status: (meta.status as any) || 'active',
-        enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
-        deploymentApproved: Boolean(meta.deployment_approved),
+        enrollmentStatus: (s.enrollment_status || meta.enrollment_status as any) || (compId ? 'approved' : 'not_enrolled'),
+        deploymentApproved: s.deployment_approved !== undefined ? Boolean(s.deployment_approved) : (meta.deployment_approved !== undefined ? Boolean(meta.deployment_approved) : Boolean(compId)),
         avatarUrl: meta.avatar_url || '',
         wfhDates: meta.wfh_dates || [],
         overtimeRequests: meta.overtime_requests || [],
@@ -1018,9 +1027,12 @@ async function loadInitialDataFromSupabase() {
           batchId: 'batch-1',
           enrollmentType: meta.group_id ? 'group' : 'individual',
           companyId: meta.company_id || '',
-          companyName: meta.company_name || 'Not Yet Enrolled (Pending Application)',
-          companyBranch: meta.company_branch || '',
-          mentorName: meta.mentor_name || 'Unassigned',
+          companyName:
+            (meta.company_name && meta.company_name !== 'Not Yet Enrolled (Pending Application)')
+              ? meta.company_name
+              : (companies.find((c) => c.id === meta.company_id || c.name === meta.company_name)?.name || 'Not Yet Enrolled (Pending Application)'),
+          companyBranch: meta.company_branch || (companies.find((c) => c.id === meta.company_id)?.branch || ''),
+          mentorName: meta.mentor_name || (companies.find((c) => c.id === meta.company_id)?.contactPerson || 'Unassigned'),
           coordinatorId: meta.coordinator_id || undefined,
           coordinatorName: meta.coordinator_name || undefined,
           coordinatorEmail: meta.coordinator_email || undefined,
@@ -1031,8 +1043,8 @@ async function loadInitialDataFromSupabase() {
           renderedHours: Number(meta.rendered_hours) || 0,
           attendanceRate: 100,
           status: (meta.status as any) || 'active',
-          enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
-          deploymentApproved: Boolean(meta.deployment_approved),
+          enrollmentStatus: (meta.enrollment_status as any) || (meta.company_id ? 'approved' : 'not_enrolled'),
+          deploymentApproved: meta.deployment_approved !== undefined ? Boolean(meta.deployment_approved) : Boolean(meta.company_id),
           avatarUrl: meta.avatar_url || '',
           wfhDates: meta.wfh_dates || [],
           overtimeRequests: meta.overtime_requests || [],
@@ -3671,6 +3683,59 @@ app.use((req, res, next) => {
     });
   });
 
+  // Dynamic Expected Time Schedule per Student
+  app.post('/api/students/:id/schedule', async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { dutyStart, dutyEnd } = req.body;
+
+    if (!dutyStart || !dutyEnd) {
+      return res.status(400).json({ error: 'dutyStart and dutyEnd are required.' });
+    }
+
+    const student = students.find((s) => s.id === id || s.email.toLowerCase() === id.toLowerCase() || s.buId === id);
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found.' });
+    }
+
+    student.dutyStart = dutyStart;
+    student.dutyEnd = dutyEnd;
+
+    // Update in Supabase students table if available
+    if (supabase) {
+      try {
+        await supabase
+          .from('students')
+          .update({
+            duty_start: dutyStart,
+            duty_end: dutyEnd,
+          })
+          .eq('id', student.id);
+      } catch (err) {
+        console.warn('Could not update students table duty schedule:', err);
+      }
+
+      // Also persist to auth user_metadata
+      if (supabaseAdmin) {
+        try {
+          const { data: uData } = await supabaseAdmin.auth.admin.getUserById(student.id);
+          if (uData?.user) {
+            await supabaseAdmin.auth.admin.updateUserById(student.id, {
+              user_metadata: {
+                ...uData.user.user_metadata,
+                duty_start: dutyStart,
+                duty_end: dutyEnd,
+              },
+            });
+          }
+        } catch (authErr) {
+          console.warn('Could not update auth metadata for duty schedule:', authErr);
+        }
+      }
+    }
+
+    res.json({ success: true, message: 'Expected duty schedule updated successfully.', student });
+  });
+
   // Attendance Records & Online Logging
   app.get('/api/attendance', async (req: Request, res: Response) => {
     await loadInitialDataFromSupabase();
@@ -3678,13 +3743,20 @@ app.use((req, res, next) => {
   });
 
   app.post('/api/attendance/time-in', (req: Request, res: Response) => {
-    const { studentId, workstationIp, remarks, dtrImageLink, shiftNumber = 1 } = req.body;
+    const { studentId, workstationIp, remarks, dtrImageLink, shiftNumber = 1, dutyStart, dutyEnd } = req.body;
     const student = findStudentRecord(studentId);
 
     if (student.enrollmentStatus !== 'approved' || !student.deploymentApproved) {
       return res.status(403).json({
         error: 'Cannot record Time-In. Your internship enrollment has not been approved and deployed by your coordinator.',
       });
+    }
+
+    if (dutyStart && dutyStart !== student.dutyStart) {
+      student.dutyStart = dutyStart;
+    }
+    if (dutyEnd && dutyEnd !== student.dutyEnd) {
+      student.dutyEnd = dutyEnd;
     }
 
     const now = new Date();
@@ -3708,8 +3780,9 @@ app.use((req, res, next) => {
       return res.json(existingShift);
     }
 
-    // Determine status (grace period: 15 min past duty start)
-    const [startH, startM] = (student.dutyStart || '08:00').split(':').map(Number);
+    // Determine status against dynamic expected dutyStart (grace period: 15 min past duty start)
+    const effectiveDutyStart = dutyStart || student.dutyStart || '08:00';
+    const [startH, startM] = effectiveDutyStart.split(':').map(Number);
     const [currH, currM] = timeStr.split(':').map(Number);
     const startMins = startH * 60 + startM;
     const currMins = currH * 60 + currM;

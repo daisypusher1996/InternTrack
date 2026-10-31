@@ -1583,6 +1583,8 @@ export default function App() {
                   isCoordinator={isCoordinator}
                   attendanceLogs={attendanceLogs}
                   onDeleteReport={handleDeleteReport}
+                  currentUser={activeUser}
+                  currentStudent={loggedInStudent || undefined}
                 />
               )}
 

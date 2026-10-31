@@ -1068,8 +1068,37 @@ export function evaluateAttendanceState(records: TodayAttendanceRecord[]): Atten
   const total = list.length;
   const activeOpenRecord = openRecords[openRecords.length - 1] || null;
 
-  // State A: 0 records today
-  if (total === 0) {
+  // Strict handling: Any open record means a shift is currently in progress
+  if (openRecords.length > 0) {
+    if (closedRecords.length >= 1) {
+      // State D: 1 closed record + 1 open record
+      return {
+        state: 'D',
+        isTimeInEnabled: false,
+        isTimeOutEnabled: true,
+        activeOpenRecord,
+        closedCount: closedRecords.length,
+        openCount: openRecords.length,
+        totalCount: total,
+        statusMessage: 'Shift 2 Active — Ready for Time-Out',
+      };
+    }
+    // State B: 1 open record (missing time_out)
+    return {
+      state: 'B',
+      isTimeInEnabled: false,
+      isTimeOutEnabled: true,
+      activeOpenRecord,
+      closedCount: 0,
+      openCount: openRecords.length,
+      totalCount: total,
+      statusMessage: 'Shift 1 Active — Ready for Time-Out',
+    };
+  }
+
+  // When there are no open records:
+  if (closedRecords.length === 0) {
+    // State A: 0 records today
     return {
       state: 'A',
       isTimeInEnabled: true,
@@ -1082,22 +1111,8 @@ export function evaluateAttendanceState(records: TodayAttendanceRecord[]): Atten
     };
   }
 
-  // State B: 1 open record (missing time_out)
-  if (total === 1 && openRecords.length === 1) {
-    return {
-      state: 'B',
-      isTimeInEnabled: false,
-      isTimeOutEnabled: true,
-      activeOpenRecord,
-      closedCount: 0,
-      openCount: 1,
-      totalCount: 1,
-      statusMessage: 'Shift 1 Active — Ready for Time-Out',
-    };
-  }
-
-  // State C: 1 closed record (has time_in and time_out)
-  if (closedRecords.length === 1 && openRecords.length === 0) {
+  if (closedRecords.length === 1) {
+    // State C: 1 closed record (has time_in and time_out)
     return {
       state: 'C',
       isTimeInEnabled: true,
@@ -1110,21 +1125,7 @@ export function evaluateAttendanceState(records: TodayAttendanceRecord[]): Atten
     };
   }
 
-  // State D: 1 closed record + 1 open record
-  if (closedRecords.length >= 1 && openRecords.length >= 1) {
-    return {
-      state: 'D',
-      isTimeInEnabled: false,
-      isTimeOutEnabled: true,
-      activeOpenRecord,
-      closedCount: closedRecords.length,
-      openCount: openRecords.length,
-      totalCount: total,
-      statusMessage: 'Shift 2 Active — Ready for Time-Out',
-    };
-  }
-
-  // State E: 2 closed records (or daily maximum)
+  // State E: 2 or more closed records (Daily maximum reached)
   return {
     state: 'E',
     isTimeInEnabled: false,
@@ -1259,6 +1260,8 @@ export async function punchTimeInToSupabase(params: {
         remarks: params.remarks || `Student Duty Punch (Shift ${shiftNum})`,
         dtrImageLink: params.dtrImageLink,
         shiftNumber: shiftNum,
+        dutyStart: params.dutyStart,
+        dutyEnd: params.dutyEnd,
       }),
     });
   } catch (apiErr) {
@@ -1702,5 +1705,130 @@ export function subscribeToRealtimeData(onChangeCallback: (payload: any) => void
   } catch (err) {
     console.warn('Could not establish Supabase Realtime subscription:', err);
     return () => {};
+  }
+}
+
+/**
+ * Update a student's dynamic expected duty schedule in Supabase and server
+ */
+export async function updateStudentScheduleInSupabase(params: {
+  studentId: string;
+  dutyStart: string;
+  dutyEnd: string;
+}): Promise<{ success: boolean; error: Error | null }> {
+  try {
+    // 1. Update Supabase students table if available
+    if (isSupabaseConfigured && supabase) {
+      let studentUuid = isValidUuid(params.studentId) ? params.studentId : null;
+      if (!studentUuid) {
+        const { data: sRow } = await supabase
+          .from('students')
+          .select('id')
+          .or(`id.eq.${params.studentId},auth_user_id.eq.${params.studentId}`)
+          .limit(1)
+          .maybeSingle();
+        if (sRow?.id) studentUuid = sRow.id;
+      }
+
+      if (studentUuid) {
+        try {
+          await supabase
+            .from('students')
+            .update({
+              duty_start: params.dutyStart,
+              duty_end: params.dutyEnd,
+            })
+            .eq('id', studentUuid);
+        } catch (dbErr) {
+          console.warn('Direct students table schedule update note:', dbErr);
+        }
+      }
+    }
+
+    // 2. Call backend schedule endpoint
+    const res = await fetch(`/api/students/${params.studentId}/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dutyStart: params.dutyStart,
+        dutyEnd: params.dutyEnd,
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to update schedule on server.');
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.error('updateStudentScheduleInSupabase error:', err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * Fetch a student's registered Host Training Establishment (HTE) company from Supabase
+ */
+export async function fetchStudentRegisteredCompany(studentId: string): Promise<{
+  company: {
+    id: string;
+    name: string;
+    branch?: string;
+    sector?: string;
+    address?: string;
+    contactPerson?: string;
+    contactEmail?: string;
+  } | null;
+  error: Error | null;
+}> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { company: null, error: null };
+  }
+
+  try {
+    let studentUuid = isValidUuid(studentId) ? studentId : null;
+    if (!studentUuid) {
+      const { data: sRow } = await supabase
+        .from('students')
+        .select('id')
+        .or(`id.eq.${studentId},auth_user_id.eq.${studentId}`)
+        .limit(1)
+        .maybeSingle();
+      if (sRow?.id) studentUuid = sRow.id;
+    }
+
+    // Attempt to query companies table from Supabase
+    const { data: compRows, error: compErr } = await supabase
+      .from('companies')
+      .select('*');
+
+    if (!compErr && compRows && compRows.length > 0) {
+      return {
+        company: {
+          id: compRows[0].id,
+          name: compRows[0].name,
+          branch: compRows[0].branch,
+          sector: compRows[0].sector,
+          address: compRows[0].address,
+          contactPerson: compRows[0].contact_person,
+          contactEmail: compRows[0].contact_email,
+        },
+        error: null,
+      };
+    }
+
+    // Fall back to server companies endpoint
+    const res = await fetch('/api/companies');
+    if (res.ok) {
+      const comps = await res.json();
+      if (Array.isArray(comps) && comps.length > 0) {
+        return { company: comps[0], error: null };
+      }
+    }
+
+    return { company: null, error: null };
+  } catch (err: any) {
+    return { company: null, error: err };
   }
 }
