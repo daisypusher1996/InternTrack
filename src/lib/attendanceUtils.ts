@@ -1,6 +1,29 @@
 import { AttendanceLog } from '../types';
 
 /**
+ * Normalizes any date string (ISO YYYY-MM-DD, ISO timestamp, or locale formatted date)
+ * into a standard YYYY-MM-DD string without timezone shifting.
+ */
+export function normalizeDateToYMD(dateStr?: string | null): string {
+  if (!dateStr) return '';
+  const trimmed = dateStr.trim();
+  const ymdMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymdMatch) {
+    return `${ymdMatch[1]}-${ymdMatch[2]}-${ymdMatch[3]}`;
+  }
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch {}
+  return trimmed;
+}
+
+/**
  * Consolidates daily attendance records for the same student within the same day:
  * - If the student clocked in & out once (e.g. morning), it is preserved as is.
  * - If the student clocked in & out a second time (e.g. afternoon), it merges into a

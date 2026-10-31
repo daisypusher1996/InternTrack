@@ -22,7 +22,7 @@ import {
 } from './BauhausIcon';
 import { Student, AttendanceLog } from '../types';
 import { useAttendanceStateMachine } from '../hooks/useAttendanceStateMachine';
-import { consolidateDailyAttendanceLogs } from '../lib/attendanceUtils';
+import { consolidateDailyAttendanceLogs, normalizeDateToYMD } from '../lib/attendanceUtils';
 
 interface AttendancePortalProps {
   students: Student[];
@@ -73,6 +73,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
   // Search & Filter state for coordinator audit table
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'present' | 'late' | 'active_on_duty' | 'absent'>('all');
+  const [selectedDutyDate, setSelectedDutyDate] = useState<string>('');
 
   const formatDtrTime = (timeVal?: string | null): string => {
     if (!timeVal || timeVal === '--:--') return '--:--';
@@ -180,7 +181,14 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
         (statusFilter === 'absent' && log.status === 'absent') ||
         (statusFilter === 'active_on_duty' && log.actualTimeIn && !log.actualTimeOut);
 
-      return matchesSearch && matchesStatus;
+      const matchesDate =
+        !selectedDutyDate ||
+        normalizeDateToYMD(log.date) === selectedDutyDate ||
+        log.date === selectedDutyDate ||
+        (log.date && log.date.includes(selectedDutyDate)) ||
+        (log.actualTimeIn && normalizeDateToYMD(log.actualTimeIn) === selectedDutyDate);
+
+      return matchesSearch && matchesStatus && matchesDate;
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || a.studentName.localeCompare(b.studentName));
 
@@ -597,6 +605,38 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
               />
             </div>
 
+            {/* Changeable Duty Date Picker */}
+            <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-1 text-xs">
+              <BauhausCalendar className="w-3.5 h-3.5 text-[#F26522] shrink-0" />
+              <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 whitespace-nowrap">Duty Date:</span>
+              <input
+                type="date"
+                value={selectedDutyDate}
+                onChange={(e) => setSelectedDutyDate(e.target.value)}
+                className="bg-transparent text-slate-800 dark:text-slate-200 font-semibold focus:outline-none text-xs cursor-pointer"
+                title="Filter records by specific duty date"
+              />
+              {selectedDutyDate ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDutyDate('')}
+                  className="text-[10px] font-bold text-slate-400 hover:text-red-500 px-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
+                  title="Clear duty date filter (view all dates)"
+                >
+                  Clear
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDutyDate(new Date().toISOString().split('T')[0])}
+                  className="text-[10px] font-bold text-[#F26522] hover:underline px-1 cursor-pointer"
+                  title="Filter to today's date"
+                >
+                  Today
+                </button>
+              )}
+            </div>
+
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as any)}
@@ -628,8 +668,23 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900">
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500 dark:text-slate-400">
-                    No attendance records match your filter criteria.
+                  <td colSpan={8} className="py-8 text-center text-slate-500 dark:text-slate-400 space-y-2">
+                    <div>
+                      {selectedDutyDate ? (
+                        <>No attendance records found for duty date <strong className="text-slate-800 dark:text-slate-200">{selectedDutyDate}</strong>.</>
+                      ) : (
+                        'No attendance records match your filter criteria.'
+                      )}
+                    </div>
+                    {selectedDutyDate && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDutyDate('')}
+                        className="px-3 py-1 text-xs font-bold text-[#F26522] hover:underline cursor-pointer"
+                      >
+                        Reset and view all duty dates
+                      </button>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -640,15 +695,31 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                       {isNewDate && (
                         <tr className="bg-slate-100/90 dark:bg-slate-800/90 border-y border-slate-200 dark:border-slate-700">
                           <td colSpan={8} className="py-2.5 px-4 font-bold text-slate-800 dark:text-slate-200">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <BauhausCalendar className="w-4 h-4 text-[#F26522]" />
                                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                                   Duty Date:
                                 </span>
-                                <span className="text-xs font-extrabold text-[#0B2545] dark:text-[#FED7AA]">
-                                  {log.date}
-                                </span>
+                                <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-2 py-0.5 rounded-md shadow-2xs">
+                                  <input
+                                    type="date"
+                                    value={selectedDutyDate || normalizeDateToYMD(log.date)}
+                                    onChange={(e) => setSelectedDutyDate(e.target.value)}
+                                    className="text-xs font-extrabold text-[#0B2545] dark:text-[#FED7AA] bg-transparent focus:outline-none cursor-pointer"
+                                    title="Click to change duty date and view records for any date"
+                                  />
+                                </div>
+                                {selectedDutyDate && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedDutyDate('')}
+                                    className="px-2 py-0.5 text-[10px] font-bold rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-red-100 hover:text-red-700 dark:hover:bg-red-950 dark:hover:text-red-300 transition-colors cursor-pointer"
+                                    title="Show records from all duty dates"
+                                  >
+                                    Show All Dates
+                                  </button>
+                                )}
                               </div>
                               <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                                 {filteredLogs.filter((l) => l.date === log.date).length} student record{filteredLogs.filter((l) => l.date === log.date).length > 1 ? 's' : ''}

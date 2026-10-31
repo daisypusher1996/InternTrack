@@ -1349,22 +1349,20 @@ export default function App() {
           </div>
 
           {/* Center: Navigation Modules (displayed between in header on web version full screen) */}
-          <nav className="hidden xl:flex items-center gap-1.5 flex-1 justify-center max-w-3xl overflow-x-auto py-1">
+          <nav className="hidden xl:flex items-center gap-2 flex-1 justify-center max-w-3xl overflow-x-auto py-1">
             {headerNavItems.map((item) => {
-              const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 flex items-center gap-2 active:scale-95 cursor-pointer shrink-0 ${
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 active:scale-95 cursor-pointer shrink-0 ${
                     isActive
                       ? 'bg-[#F26522] text-white shadow-sm'
                       : 'text-slate-300 hover:text-white hover:bg-white/10'
                   }`}
                 >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
+                  {item.label}
                 </button>
               );
             })}
