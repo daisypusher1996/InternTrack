@@ -273,7 +273,7 @@ export default function App() {
           avatarUrl: studentRecord.avatarUrl || authUser.user_metadata?.avatar_url || localStorage.getItem(`interntrack_avatar_${cleanEmail}`) || (authUserId ? localStorage.getItem(`interntrack_avatar_${authUserId}`) : null) || '',
           studentProfile: studentRecord,
         };
-        setActiveTab('student-portal');
+        setActiveTab((prev) => (prev && prev !== 'dashboard' && prev !== 'student-portal' ? prev : 'student-portal'));
         return apply({ status: 'STUDENT', user: studentUser, student: studentRecord }, studentUser);
       }
 
@@ -289,7 +289,7 @@ export default function App() {
           classBlock: '',
           avatarUrl: coordRecord.avatar_url || authUser.user_metadata?.avatar_url || localStorage.getItem(`interntrack_avatar_${cleanEmail}`) || (authUserId ? localStorage.getItem(`interntrack_avatar_${authUserId}`) : null) || '',
         };
-        setActiveTab('dashboard');
+        setActiveTab((prev) => (prev && prev !== 'dashboard' && prev !== 'student-portal' ? prev : 'dashboard'));
         return apply({ status: 'COORDINATOR', user: coordUser, coordinator: coordRecord }, coordUser);
       }
 

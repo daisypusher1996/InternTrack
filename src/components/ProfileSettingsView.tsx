@@ -84,45 +84,12 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
 
   const handleSelectPreset = (presetPath: string) => {
     setAvatarUrl(presetPath);
-    const cleanEmail = currentUser.email?.toLowerCase().trim();
-    if (cleanEmail) {
-      localStorage.setItem(`interntrack_avatar_${cleanEmail}`, presetPath);
-    }
-    if (currentUser.id) {
-      localStorage.setItem(`interntrack_avatar_${currentUser.id}`, presetPath);
-    }
-    // Auto-save to account so it retains as the account avatar
-    onUpdateProfile({
-      fullName: fullName.trim() || currentUser.fullName,
-      avatarUrl: presetPath,
-    }).then(() => {
-      setSuccessFeedback('Avatar updated and retained as account avatar!');
-      setTimeout(() => setSuccessFeedback(null), 3000);
-    }).catch((err) => {
-      console.warn('Auto-save preset avatar note:', err);
-    });
   };
 
   const handleResetToBlank = () => {
     setAvatarUrl('');
     setCustomUrlInput('');
     setShowUrlField(false);
-    const cleanEmail = currentUser.email?.toLowerCase().trim();
-    if (cleanEmail) {
-      localStorage.removeItem(`interntrack_avatar_${cleanEmail}`);
-    }
-    if (currentUser.id) {
-      localStorage.removeItem(`interntrack_avatar_${currentUser.id}`);
-    }
-    onUpdateProfile({
-      fullName: fullName.trim() || currentUser.fullName,
-      avatarUrl: '',
-    }).then(() => {
-      setSuccessFeedback('Avatar reset to blank icon.');
-      setTimeout(() => setSuccessFeedback(null), 3000);
-    }).catch((err) => {
-      console.warn('Reset avatar note:', err);
-    });
   };
 
   const calculateStrength = (pass: string) => {
@@ -354,7 +321,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                       Choose Preset Avatar Icon:
                     </label>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Click an icon to set as your account avatar
+                      Select an icon below and click Save Changes to apply
                     </span>
                   </div>
 
