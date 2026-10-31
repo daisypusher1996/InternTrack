@@ -226,7 +226,7 @@ export interface AttendanceAlert {
   studentId: string;
   studentName: string;
   companyName: string;
-  anomalyType: 'MISSED_ATTENDANCE_WINDOW' | 'LATE_CHECK_IN_ANOMALY' | 'CONSECUTIVE_UNEXCUSED';
+  anomalyType: 'MISSED_ATTENDANCE_WINDOW' | 'LATE_CHECK_IN_ANOMALY' | 'CONSECUTIVE_UNEXCUSED' | 'UNDERTIME_DEPARTURE';
   severity: 'low' | 'medium' | 'high' | 'critical';
   detectionMethod: string;
   anomalyScore: number;

@@ -1074,33 +1074,35 @@ export default function App() {
       const res = await fetch('/api/ai/run-anomaly-detection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ studentId: studentId || 'stu-4', checkTime: '09:45:00' }),
+        body: JSON.stringify({ studentId: studentId || 'all' }),
       });
       const data = await res.json();
       if (data.alerts) {
         setAlerts(data.alerts);
       }
-      await refreshData();
+      return data;
     } catch (err) {
       console.error(err);
+      return null;
     } finally {
       setIsRunningDetection(false);
     }
   };
 
-  const handleTriggerGroupSummary = async (groupId: string) => {
+  const handleTriggerGroupSummary = async (groupId: string, studentId?: string) => {
     setIsSummarizing(true);
     try {
       const res = await fetch('/api/ai/summarize-group', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId, weekNumber: 6 }),
+        body: JSON.stringify({ groupId, studentId, weekNumber: 6 }),
       });
       const data = await res.json();
-      setSummaries([data, ...summaries.filter((s) => s.id !== data.id)]);
-      await refreshData();
+      setSummaries((prev) => [data, ...prev.filter((s) => s.id !== data.id)]);
+      return data;
     } catch (err) {
       console.error(err);
+      return null;
     } finally {
       setIsSummarizing(false);
     }

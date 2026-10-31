@@ -70,6 +70,30 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'present' | 'late' | 'active_on_duty' | 'absent'>('all');
 
+  const formatDtrTime = (timeVal?: string | null): string => {
+    if (!timeVal || timeVal === '--:--') return '--:--';
+    try {
+      if (timeVal.includes('T')) {
+        const d = new Date(timeVal);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        }
+      }
+      const clean = timeVal.trim();
+      if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(clean)) {
+        const parts = clean.split(':').map(Number);
+        const h = parts[0];
+        const m = parts[1];
+        const period = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`;
+      }
+      return timeVal;
+    } catch {
+      return String(timeVal);
+    }
+  };
+
   // Live clock ticker
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -644,7 +668,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                         </td>
                         <td className="py-3 px-4 font-mono">
                           {log.actualTimeIn ? (
-                            <span className="font-bold text-emerald-700 dark:text-emerald-400">{log.actualTimeIn}</span>
+                            <span className="font-bold text-emerald-700 dark:text-emerald-400">{formatDtrTime(log.actualTimeIn)}</span>
                           ) : (
                             <span className="text-red-500 font-bold bg-red-50 dark:bg-red-950/80 px-2 py-0.5 rounded">
                               Not Logged
@@ -653,7 +677,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                         </td>
                         <td className="py-3 px-4 font-mono">
                           {log.actualTimeOut ? (
-                            <span className="font-bold text-emerald-700 dark:text-emerald-400">{log.actualTimeOut}</span>
+                            <span className="font-bold text-emerald-700 dark:text-emerald-400">{formatDtrTime(log.actualTimeOut)}</span>
                           ) : log.actualTimeIn ? (
                             <span className="text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-950/80 px-2 py-0.5 rounded">
                               Active On Duty

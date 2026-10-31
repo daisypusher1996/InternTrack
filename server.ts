@@ -289,7 +289,7 @@ interface AttendanceAlert {
   studentId: string;
   studentName: string;
   companyName: string;
-  anomalyType: 'MISSED_ATTENDANCE_WINDOW' | 'LATE_CHECK_IN_ANOMALY' | 'CONSECUTIVE_UNEXCUSED';
+  anomalyType: 'MISSED_ATTENDANCE_WINDOW' | 'LATE_CHECK_IN_ANOMALY' | 'CONSECUTIVE_UNEXCUSED' | 'UNDERTIME_DEPARTURE';
   severity: 'low' | 'medium' | 'high' | 'critical';
   detectionMethod: string;
   anomalyScore: number;
@@ -1218,10 +1218,10 @@ async function loadInitialDataFromSupabase() {
             companyId: matchedSt.companyId || '',
             companyName: matchedSt.companyName || '',
             date: a.date,
-            expectedTimeIn: '08:00',
-            actualTimeIn: a.time_in ? (a.time_in.includes('T') ? a.time_in.split('T')[1].slice(0, 5) : a.time_in) : '08:00',
-            expectedTimeOut: '17:00',
-            actualTimeOut: a.time_out ? (a.time_out.includes('T') ? a.time_out.split('T')[1].slice(0, 5) : a.time_out) : undefined,
+            expectedTimeIn: matchedSt.dutyStart || '08:00',
+            actualTimeIn: a.time_in || '08:00',
+            expectedTimeOut: matchedSt.dutyEnd || '17:00',
+            actualTimeOut: a.time_out || undefined,
             hoursRendered: Number(a.hours_rendered) || 0,
             status: ((matchedSt.wfhDates || []).includes(a.date) || (matchedSt.wfhDates || []).includes(toIsoDate(a.date)))
               ? 'wfh'
@@ -3584,8 +3584,8 @@ app.use((req, res, next) => {
     });
   });
 
-  app.post('/api/students/:id/approve-completion', (req: Request, res: Response) => {
-    const student = students.find((s) => s.id === req.params.id);
+  app.post('/api/students/:id/approve-completion', async (req: Request, res: Response) => {
+    const student = students.find((s) => s.id === req.params.id || s.email.toLowerCase() === req.params.id.toLowerCase() || s.buId === req.params.id);
     if (!student) {
       return res.status(404).json({ error: 'Student not found.' });
     }
@@ -3597,6 +3597,38 @@ app.use((req, res, next) => {
       day: 'numeric',
       year: 'numeric',
     });
+
+    // Persist to Supabase
+    if (supabaseAdmin) {
+      try {
+        const { data: uData } = await supabaseAdmin.auth.admin.getUserById(student.id);
+        if (uData?.user) {
+          await supabaseAdmin.auth.admin.updateUserById(student.id, {
+            user_metadata: {
+              ...uData.user.user_metadata,
+              status: 'completed',
+              completion_approved: true,
+              completion_approved_at: student.completionApprovedAt,
+            },
+          });
+        }
+      } catch (authErr) {
+        console.warn('Could not update auth metadata on approve completion:', authErr);
+      }
+    }
+
+    if (supabase) {
+      try {
+        await supabase
+          .from('students')
+          .update({
+            completed_hours: Math.max(student.renderedHours, student.targetHours),
+          })
+          .eq('id', student.id);
+      } catch (dbErr) {
+        console.warn('Could not update students table on approve completion:', dbErr);
+      }
+    }
 
     res.json({
       success: true,
@@ -4183,157 +4215,211 @@ app.use((req, res, next) => {
     res.json(alert);
   });
 
-  // Trigger Python Anomaly Detection Engine
+  // Attendance Anomaly Detection & Current Status Evaluation Engine
   app.post('/api/ai/run-anomaly-detection', async (req: Request, res: Response) => {
     try {
-      const { studentId, checkTime } = req.body;
-      const student = students.find((s) => s.id === studentId) || students.find((s) => s.status === 'at_risk') || students[0] || {
-        id: studentId || 'stu-default',
-        fullName: 'Student Intern',
-        email: 'student@bicol-u.edu.ph',
-        companyName: 'Bicol University HTE Partner',
-        dutyStart: '08:00',
-        dutyEnd: '17:00',
-      };
-      const log = attendanceLogs.find((l) => l.studentId === student.id) || {
-        date: 'August 19, 2026',
-        actualTimeIn: null,
-      };
+      await loadInitialDataFromSupabase();
+      const { studentId } = req.body;
+      const now = new Date();
+      const todayStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+      const currentHours = now.getHours();
+      const currentMinutes = now.getMinutes();
+      const currentTotalMins = currentHours * 60 + currentMinutes;
 
-      const pythonPayload = {
-        student: {
-          id: student.id,
-          full_name: student.fullName,
-          email: student.email,
-          coordinator_email: student.coordinatorEmail || 'coordinator@bicol-u.edu.ph',
-          company_name: student.companyName,
-        },
-        schedule: {
-          duty_start: student.dutyStart,
-          duty_end: student.dutyEnd,
-        },
-        log: {
-          date: log.date,
-          actual_time_in: log.actualTimeIn,
-        },
-        history_latenesses: [0, 5, 2, -3, 30],
-        current_check_time: checkTime || '09:45:00',
-      };
+      // Filter target students (strictly enrolled and deployed students)
+      const targetStudents = (studentId && studentId !== 'all')
+        ? students.filter((s) => s.id === studentId || s.email.toLowerCase() === studentId.toLowerCase())
+        : students.filter((s) => s.enrollmentStatus === 'approved' && s.deploymentApproved && !s.isArchived);
 
-      // Run Python script directly
-      const scriptPath = path.resolve(__dirname, 'ai', 'attendance_anomaly_detector.py');
-      let pythonOutput = '';
-      let pythonError = '';
+      const evaluatedStudents: Array<{
+        studentId: string;
+        fullName: string;
+        buId: string;
+        companyName: string;
+        status: 'doing_fine' | 'lacking_hours' | 'absent' | 'wfh';
+        statusLabel: string;
+        actualTimeIn: string | null;
+        actualTimeOut: string | null;
+        expectedSchedule: string;
+        hoursRendered: number;
+        detailMessage: string;
+      }> = [];
 
-      try {
-        const pyProcess = spawn('python3', [scriptPath]);
-        pyProcess.stdin.write(JSON.stringify(pythonPayload));
-        pyProcess.stdin.end();
+      let doingFineCount = 0;
+      let lackingHoursCount = 0;
+      let absentCount = 0;
 
-        pyProcess.stdout.on('data', (data) => {
-          pythonOutput += data.toString();
-        });
+      for (const st of targetStudents) {
+        // Today's log for student
+        const studentTodayLogs = attendanceLogs.filter(
+          (l) => l.studentId === st.id && (l.date === todayStr || l.date.includes(todayStr.split(',')[0]))
+        );
+        const latestLog = studentTodayLogs[0] || null;
 
-        pyProcess.stderr.on('data', (data) => {
-          pythonError += data.toString();
-        });
+        const dutyStart = st.dutyStart || '08:00';
+        const dutyEnd = st.dutyEnd || '17:00';
+        const [startH, startM] = dutyStart.split(':').map(Number);
+        const startTotalMins = startH * 60 + startM;
+        const graceEndMins = startTotalMins + 15;
 
-        pyProcess.on('close', (code) => {
-          if (code === 0 && pythonOutput.trim()) {
-            try {
-              const parsed = JSON.parse(pythonOutput);
-              if (parsed.alerts && parsed.alerts.length > 0) {
-                parsed.alerts.forEach((newAlt: any) => {
-                  const existing = attendanceAlerts.find((a) => a.id === newAlt.alert_id);
-                  if (!existing) {
-                    attendanceAlerts.unshift({
-                      id: newAlt.alert_id,
-                      studentId: newAlt.student_id,
-                      studentName: newAlt.student_name,
-                      companyName: newAlt.company_name,
-                      anomalyType: newAlt.anomaly_type,
-                      severity: newAlt.severity,
-                      detectionMethod: newAlt.detection_method,
-                      anomalyScore: newAlt.anomaly_score,
-                      expectedSchedule: newAlt.expected_schedule,
-                      message: newAlt.message,
-                      emailDispatched: true,
-                      pushDispatched: true,
-                      status: 'pending_review',
-                      createdAt: new Date().toISOString(),
-                    });
-                  }
-                });
-              }
-              return res.json({
-                success: true,
-                engine: 'Python 3.10 Statistical & Rule-Based Detector',
-                alertsDetected: parsed.alerts_detected,
-                alerts: attendanceAlerts,
+        const isWfh = (st.wfhDates || []).includes(todayStr) || (st.wfhDates || []).includes(toIsoDate(todayStr));
+        const totalHoursRendered = studentTodayLogs.reduce((acc, l) => acc + (Number(l.hoursRendered) || 0), 0);
+
+        let studentStatus: 'doing_fine' | 'lacking_hours' | 'absent' | 'wfh' = 'doing_fine';
+        let statusLabel = 'Doing Fine (On Duty)';
+        let detailMessage = '';
+
+        if (isWfh) {
+          studentStatus = 'wfh';
+          statusLabel = 'Work From Home (Approved)';
+          detailMessage = `${st.fullName} has an approved WFH arrangement for today. Exempt from workstation check-in.`;
+          doingFineCount++;
+        } else if (!latestLog || !latestLog.actualTimeIn) {
+          // No check-in yet
+          if (currentTotalMins > graceEndMins) {
+            // Past grace window - absent!
+            studentStatus = 'absent';
+            statusLabel = 'Absent (No Check-In Recorded)';
+            detailMessage = `${st.fullName} has not recorded a Time-In for the scheduled shift (${dutyStart} – ${dutyEnd}). 15-minute grace period has expired.`;
+            absentCount++;
+
+            // Create alert if not already present
+            const alertId = `alt-absent-${st.id}-${Date.now()}`;
+            if (!attendanceAlerts.some((a) => a.studentId === st.id && a.anomalyType === 'MISSED_ATTENDANCE_WINDOW')) {
+              attendanceAlerts.unshift({
+                id: alertId,
+                studentId: st.id,
+                studentName: st.fullName,
+                companyName: st.companyName,
+                anomalyType: 'MISSED_ATTENDANCE_WINDOW',
+                severity: 'high',
+                detectionMethod: 'Real-Time Schedule Evaluation',
+                anomalyScore: 0.95,
+                expectedSchedule: `${dutyStart} – ${dutyEnd}`,
+                message: detailMessage,
+                emailDispatched: true,
+                pushDispatched: true,
+                status: 'pending_review',
+                createdAt: new Date().toISOString(),
               });
-            } catch (e) {
-              // fallback
             }
+          } else {
+            studentStatus = 'doing_fine';
+            statusLabel = 'Awaiting Shift Start';
+            detailMessage = `Duty shift begins at ${dutyStart}. Student is currently within the standard check-in window.`;
+            doingFineCount++;
           }
+        } else if (latestLog.actualTimeIn && !latestLog.actualTimeOut) {
+          // Currently checked in and actively on duty!
+          studentStatus = 'doing_fine';
+          statusLabel = 'Doing Fine (Active On Duty)';
+          detailMessage = `Intern is actively rendering duty. Recorded Time-In at ${latestLog.actualTimeIn}.`;
+          doingFineCount++;
+        } else if (latestLog.actualTimeIn && latestLog.actualTimeOut) {
+          // Closed shift - check hours
+          if (totalHoursRendered < 8.0) {
+            studentStatus = 'lacking_hours';
+            statusLabel = `Lacking Expected Hours (${totalHoursRendered.toFixed(1)}h / 8.0h)`;
+            detailMessage = `Intern timed out with insufficient daily duty duration (${totalHoursRendered.toFixed(1)}h of 8h standard). Lacking ${(8.0 - totalHoursRendered).toFixed(1)}h.`;
+            lackingHoursCount++;
 
-          // Fallback generator if python process failed
-          return generateFallbackAlert(student, log, res);
+            const alertId = `alt-undertime-${st.id}-${Date.now()}`;
+            if (!attendanceAlerts.some((a) => a.studentId === st.id && a.anomalyType === 'UNDERTIME_DEPARTURE')) {
+              attendanceAlerts.unshift({
+                id: alertId,
+                studentId: st.id,
+                studentName: st.fullName,
+                companyName: st.companyName,
+                anomalyType: 'UNDERTIME_DEPARTURE',
+                severity: 'medium',
+                detectionMethod: 'Workstation Duty Duration Analysis',
+                anomalyScore: 0.88,
+                expectedSchedule: `${dutyStart} – ${dutyEnd}`,
+                message: detailMessage,
+                emailDispatched: true,
+                pushDispatched: true,
+                status: 'pending_review',
+                createdAt: new Date().toISOString(),
+              });
+            }
+          } else {
+            studentStatus = 'doing_fine';
+            statusLabel = 'Doing Fine (Full Duty Completed)';
+            detailMessage = `Completed full duty shift successfully with ${totalHoursRendered.toFixed(1)} hours rendered.`;
+            doingFineCount++;
+          }
+        }
+
+        evaluatedStudents.push({
+          studentId: st.id,
+          fullName: st.fullName,
+          buId: st.buId,
+          companyName: st.companyName,
+          status: studentStatus,
+          statusLabel,
+          actualTimeIn: latestLog?.actualTimeIn || null,
+          actualTimeOut: latestLog?.actualTimeOut || null,
+          expectedSchedule: `${dutyStart} – ${dutyEnd}`,
+          hoursRendered: totalHoursRendered,
+          detailMessage,
         });
-      } catch (err) {
-        return generateFallbackAlert(student, log, res);
       }
+
+      return res.json({
+        success: true,
+        evaluatedAt: new Date().toISOString(),
+        metrics: {
+          total: targetStudents.length,
+          doingFine: doingFineCount,
+          lackingHours: lackingHoursCount,
+          absent: absentCount,
+        },
+        evaluatedStudents,
+        alerts: attendanceAlerts,
+      });
     } catch (err: any) {
       console.error('Anomaly detection error:', err);
       return res.status(500).json({ error: err.message || 'Anomaly detection failed' });
     }
   });
 
-  function generateFallbackAlert(student: Student, log: any, res: Response) {
-    const formattedWindow = `${student.dutyStart || '08:00'} – ${student.dutyEnd || '17:00'}, August 19, 2026`;
-    const noticeMessage = `${student.fullName || 'Student'} has not recorded a time-in for the scheduled internship period (${formattedWindow}). The system has notified the student and flagged this entry for the internship coordinator's review.`;
-    const newAlt: AttendanceAlert = {
-      id: `alt-${Date.now()}`,
-      studentId: student.id,
-      studentName: student.fullName || 'Student',
-      companyName: student.companyName || 'Bicol University HTE Partner',
-      anomalyType: 'MISSED_ATTENDANCE_WINDOW',
-      severity: 'high',
-      detectionMethod: 'Rule-Based Engine (Fallback)',
-      anomalyScore: 0.985,
-      expectedSchedule: formattedWindow,
-      message: noticeMessage,
-      emailDispatched: true,
-      pushDispatched: true,
-      status: 'pending_review',
-      createdAt: new Date().toISOString(),
-    };
-    attendanceAlerts.unshift(newAlt);
-    return res.json({
-      success: true,
-      engine: 'Built-in Anomaly Detector Engine',
-      alertsDetected: 1,
-      alerts: attendanceAlerts,
-    });
-  }
-
-  // AI NLP Summarization Module (LLM API via Google GenAI gemini-3.8-flash)
+  // AI NLP Accomplishment Summarization Module
   app.get('/api/ai/summaries', (req: Request, res: Response) => {
     res.json(aiSummaries);
   });
 
   app.post('/api/ai/summarize-group', async (req: Request, res: Response) => {
     try {
-      const { groupId, weekNumber } = req.body;
-      const targetGroup = groups.find((g) => g.id === groupId) || groups[0] || {
-        id: groupId || 'group-1',
-        name: 'BSCS 4-A Cohort',
-        code: 'BSCS-4A',
-        companyName: 'Bicol University HTE Partner',
-        membersCount: 1,
-      };
-      const groupReports = accomplishmentReports.filter(
-        (r) => r.groupId === targetGroup.id || targetGroup.membersCount > 0
-      );
+      const { groupId, studentId, weekNumber } = req.body;
+      let targetName = 'Practicum Cohort';
+      let targetCompany = 'Host Training Establishment';
+      let totalMembers = 1;
+      let groupReports: AccomplishmentReport[] = [];
+
+      if (studentId) {
+        const student = students.find((s) => s.id === studentId || s.email.toLowerCase() === studentId.toLowerCase() || s.buId === studentId);
+        if (student) {
+          targetName = student.fullName;
+          targetCompany = student.companyName || 'Host Training Establishment';
+          totalMembers = 1;
+          groupReports = accomplishmentReports.filter((r) => r.studentId === student.id);
+        }
+      } else {
+        const targetGroup = groups.find((g) => g.id === groupId) || groups[0];
+        if (targetGroup) {
+          targetName = targetGroup.name;
+          targetCompany = targetGroup.companyName || 'Host Training Establishment';
+          totalMembers = targetGroup.membersCount || 1;
+          groupReports = accomplishmentReports.filter(
+            (r) => r.groupId === targetGroup.id || targetGroup.membersCount > 0
+          );
+        }
+      }
+
+      // If reports are empty, gather all available reports to synthesize
+      if (groupReports.length === 0) {
+        groupReports = accomplishmentReports.slice(0, 8);
+      }
 
       // Calculate aggregated stats
       const totalHours = groupReports.reduce((sum, r) => sum + r.hoursSpent, 0);
@@ -4353,12 +4439,12 @@ app.use((req, res, next) => {
       if (apiKey) {
         try {
           const prompt = `You are the AI Practicum Monitoring Analyst for Bicol University (BU) InternTrack.
-Synthesize the following weekly internship accomplishment reports submitted by a student cohort deployed at ${targetGroup.companyName}.
+Synthesize the following weekly internship accomplishment reports for ${targetName} deployed at ${targetCompany}.
 
-Cohort Details:
-- Group Name: ${targetGroup.name} (${targetGroup.code})
-- Partner Company: ${targetGroup.companyName}
-- Total Members Enrolled: ${targetGroup.membersCount}
+Practicum Details:
+- Name: ${targetName}
+- Partner Company: ${targetCompany}
+- Total Enrolled: ${totalMembers}
 - Week Number: Week ${weekNumber || 6}
 - Total Hours Rendered This Week: ${totalHours} hours
 - Accomplishment Entries Submitted: ${groupReports.length}
@@ -4369,7 +4455,7 @@ Sample Accomplishment Logs:
 ${groupReports.map((r) => `- [${r.studentName} | ${r.workCategory}]: ${r.taskTitle} - ${r.taskDescription} (${r.taskStatus})`).join('\n')}
 
 Produce a concise executive summary matching this exact tone and format from the research paper:
-"The group maintained consistent attendance and completed the majority of its assigned tasks, with strongest activity in system testing and documentation."
+"The student/group maintained consistent attendance and completed the majority of assigned tasks, with strongest activity in system testing and documentation."
 
 Respond in valid JSON format with this structure:
 {
@@ -4398,9 +4484,9 @@ Respond in valid JSON format with this structure:
       // Default concept paper compliant synthesis if Gemini was unavailable or errored
       if (!generatedHighlight) {
         const topAreaStr = sortedWorkAreas.slice(0, 2).map((s) => s.toLowerCase()).join(' and ');
-        generatedHighlight = `The group maintained consistent attendance and completed the majority of its assigned tasks, with strongest activity in ${topAreaStr || 'system testing and documentation'}.`;
+        generatedHighlight = `${targetName} maintained consistent attendance and completed assigned practicum tasks, with strongest activity in ${topAreaStr || 'system testing and documentation'}.`;
         keyFindings = [
-          `All ${targetGroup.membersCount} cohort members rendered a combined ${totalHours} hours this week at ${targetGroup.companyName}`,
+          `${targetName} rendered ${totalHours} verified duty hours this week at ${targetCompany}`,
           `${completedTasks} out of ${groupReports.length} submitted task accomplishments were verified completed`,
           `Primary technical contributions concentrated in ${sortedWorkAreas[0] || 'System Testing'} and ${sortedWorkAreas[1] || 'Documentation'}`,
         ];
@@ -4408,11 +4494,11 @@ Respond in valid JSON format with this structure:
 
       const newSummary: AISummary = {
         id: `sum-${Date.now()}`,
-        groupId: targetGroup.id,
-        groupName: targetGroup.name,
+        groupId: groupId || (studentId ? `student-${studentId}` : 'group-1'),
+        groupName: targetName,
         weekNumber: weekNumber || 6,
-        totalMembers: targetGroup.membersCount,
-        membersAttended: targetGroup.membersCount,
+        totalMembers,
+        membersAttended: totalMembers,
         totalHoursRendered: totalHours,
         tasksSubmitted: groupReports.length,
         tasksCompleted: completedTasks,

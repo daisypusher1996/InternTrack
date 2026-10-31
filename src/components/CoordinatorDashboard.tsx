@@ -27,6 +27,7 @@ import {
   Layers,
   Download,
   User as UserIcon,
+  Loader2,
 } from 'lucide-react';
 import {
   Student,
@@ -157,22 +158,57 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
       ? approvedInternsList
       : activeUnarchivedList;
 
-  // Handled Course/Blocks list: strictly lists cohort only if at least one enrolled & deployed student belongs to it
-  const availableBlocks = useMemo(() => {
-    const blocksWithEnrolledStudents = enrolledAssignedStudents
-      .filter(
-        (s) =>
-          s.classBlock &&
-          s.classBlock.trim() !== '' &&
-          s.classBlock !== 'Unassigned Block'
-      )
-      .map((s) => s.classBlock!.trim());
+  // Helper to reliably resolve a student's course and class block
+  const resolveStudentCourseBlock = (s: Student): string => {
+    if (s.classBlock && s.classBlock.trim() !== '' && s.classBlock !== 'Unassigned Block') {
+      return s.classBlock.trim();
+    }
+    if (s.degree) {
+      if (s.degree.includes('Computer Science') || s.degree.includes('BSCS')) return 'BSCS 4-A';
+      if (s.degree.includes('Information Tech') || s.degree.includes('BSIT')) return 'BSIT 4-A';
+      if (s.degree.includes('Information Sys') || s.degree.includes('BSIS')) return 'BSIS 4-A';
+      if (s.degree.includes('Biology')) return 'BSBIO 4-A';
+      if (s.degree.includes('Chemistry')) return 'BSCHEM 4-A';
+      return `${s.degree} 4-A`;
+    }
+    return 'BSCS 4-A';
+  };
 
+  // Helper to format DTR punch times accurately in local time
+  const formatDtrTime = (timeVal?: string | null): string => {
+    if (!timeVal || timeVal === '--:--') return '--:--';
+    try {
+      if (timeVal.includes('T')) {
+        const d = new Date(timeVal);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        }
+      }
+      const clean = timeVal.trim();
+      if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(clean)) {
+        const parts = clean.split(':').map(Number);
+        const h = parts[0];
+        const m = parts[1];
+        const period = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`;
+      }
+      return timeVal;
+    } catch {
+      return String(timeVal);
+    }
+  };
+
+  // Handled Course/Blocks list: lists cohorts with active enrolled students
+  const availableBlocks = useMemo(() => {
+    const blocksWithEnrolledStudents = enrolledAssignedStudents.map((s) => resolveStudentCourseBlock(s));
     return Array.from(new Set(blocksWithEnrolledStudents)).sort();
   }, [enrolledAssignedStudents]);
 
   // Students in selected block
-  const blockStudents = enrolledAssignedStudents.filter((s) => s.classBlock === selectedBlock);
+  const blockStudents = enrolledAssignedStudents.filter(
+    (s) => resolveStudentCourseBlock(s) === selectedBlock
+  );
   const blockTotalHours = blockStudents.reduce((acc, s) => acc + s.renderedHours, 0);
 
   // Today's date string
@@ -593,7 +629,7 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
         ) : (
           <div className="space-y-3">
             {availableBlocks.map((blk) => {
-              const currStudents = enrolledAssignedStudents.filter((s) => s.classBlock === blk);
+              const currStudents = enrolledAssignedStudents.filter((s) => resolveStudentCourseBlock(s) === blk);
               const currHours = currStudents.reduce((acc, s) => acc + s.renderedHours, 0);
               const currLogsToday = currStudents.map((s) => {
                 const log = filteredAttendanceLogs.find(
@@ -782,10 +818,10 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
                                   {s.dutyStart} – {s.dutyEnd}
                                 </td>
                                 <td className="py-3 px-3.5 font-mono font-bold text-[#10B981]">
-                                  {log?.actualTimeIn ? log.actualTimeIn : <span className="text-slate-400 dark:text-[#9CA3AF]/60 font-normal">--:--</span>}
+                                  {log?.actualTimeIn ? formatDtrTime(log.actualTimeIn) : <span className="text-slate-400 dark:text-[#9CA3AF]/60 font-normal">--:--</span>}
                                 </td>
                                 <td className="py-3 px-3.5 font-mono font-bold text-[#10B981]">
-                                  {log?.actualTimeOut ? log.actualTimeOut : <span className="text-slate-400 dark:text-[#9CA3AF]/60 font-normal">Active On Duty</span>}
+                                  {log?.actualTimeOut ? formatDtrTime(log.actualTimeOut) : log?.actualTimeIn ? <span className="text-amber-600 dark:text-amber-400 font-bold">Active On Duty</span> : <span className="text-slate-400 dark:text-[#9CA3AF]/60 font-normal">--:--</span>}
                                 </td>
                                 <td className="py-3 px-3.5">
                                   {log?.actualTimeIn ? (
@@ -1107,50 +1143,64 @@ export const CoordinatorDashboard: React.FC<CoordinatorDashboardProps> = ({
 
                   {/* Actions for Coordinator */}
                   <div className="pt-3 mt-3 border-t border-slate-200 dark:border-[#2a2a2a] flex items-center justify-between gap-2 text-xs">
-                    {!isEligibleOrComplete ? (
-                      <button
-                        onClick={async () => {
-                          setProcessingId(s.id);
-                          await onCreditHours(s.id, s.targetHours);
-                          setActionFeedback(`Credited full 240 hours to ${s.fullName}. Intern is now eligible for completion approval.`);
-                          setProcessingId(null);
-                          setTimeout(() => setActionFeedback(null), 3500);
-                        }}
-                        disabled={processingId === s.id}
-                        className="text-[11px] text-[#0875e1] hover:text-blue-500 font-semibold underline underline-offset-2 active:scale-95 transition-all cursor-pointer"
-                        title="Simulate full 240 hours to test completion approval"
-                      >
-                        Simulate Full 240h
-                      </button>
-                    ) : (
-                      <span className="text-[11px] text-[#10B981] font-bold flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Eligible for Archival
-                      </span>
-                    )}
+                    <div>
+                      {s.completionApproved ? (
+                        <span className="text-[11px] text-[#10B981] font-bold flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Completed • Ready for Archival
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-slate-500 dark:text-[#9CA3AF] font-medium">
+                          Practicum in progress
+                        </span>
+                      )}
+                    </div>
 
                     <div className="flex items-center gap-1.5">
                       {!s.completionApproved ? (
                         <button
                           onClick={async () => {
                             setProcessingId(s.id);
-                            await onApproveCompletion(s.id);
-                            setActionFeedback(`Practicum completion officially approved for ${s.fullName}. You can now archive them into their Class Block repository.`);
-                            setProcessingId(null);
-                            setTimeout(() => setActionFeedback(null), 3500);
+                            try {
+                              await onApproveCompletion(s.id);
+                              s.completionApproved = true;
+                              s.status = 'completed';
+                              setActionFeedback(`Practicum completion officially approved for ${s.fullName}. You can now archive them into their Class Block repository.`);
+                              setTimeout(() => setActionFeedback(null), 3500);
+                            } catch (err: any) {
+                              setActionFeedback(err.message || 'Failed to approve completion.');
+                            } finally {
+                              setProcessingId(null);
+                            }
                           }}
                           disabled={processingId === s.id}
-                          className="px-3 py-1.5 rounded-lg bg-[#0875e1] hover:bg-[#007BFF] text-white font-bold text-xs transition-all active:scale-95 shadow-xs cursor-pointer"
+                          className="px-3 py-1.5 rounded-lg bg-[#0875e1] hover:bg-[#007BFF] text-white font-bold text-xs transition-all active:scale-95 shadow-xs cursor-pointer flex items-center gap-1.5"
                         >
-                          Approve Completion
+                          {processingId === s.id ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Approving...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Approve Completion</span>
+                            </>
+                          )}
                         </button>
                       ) : (
                         <button
                           onClick={async () => {
                             setProcessingId(s.id);
-                            await onArchiveStudent(s.id);
-                            setActionFeedback(`Successfully transferred ${s.fullName} to the Class Block (${s.classBlock || 'BSCS 4-A'}) Record Archive!`);
-                            setProcessingId(null);
-                            setTimeout(() => setActionFeedback(null), 4000);
+                            try {
+                              await onArchiveStudent(s.id);
+                              s.isArchived = true;
+                              setActionFeedback(`Successfully transferred ${s.fullName} to the Class Block (${s.classBlock || 'BSCS 4-A'}) Record Archive!`);
+                              setTimeout(() => setActionFeedback(null), 4000);
+                            } catch (err: any) {
+                              setActionFeedback(err.message || 'Failed to archive student.');
+                            } finally {
+                              setProcessingId(null);
+                            }
                           }}
                           disabled={processingId === s.id}
                           className="px-3 py-1.5 rounded-lg bg-[#0875e1] hover:bg-[#007BFF] text-white font-bold text-xs transition-all active:scale-95 shadow-xs flex items-center gap-1 cursor-pointer"
