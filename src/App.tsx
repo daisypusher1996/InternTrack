@@ -185,7 +185,19 @@ export default function App() {
               }
             }
           }
-          setCurrentUser((prev) => (prev ? { ...prev, studentProfile: freshStudent } : prev));
+          const cleanEmail = currentUser.email.toLowerCase().trim();
+          const storedAvatar = currentUser.avatarUrl || localStorage.getItem(`interntrack_avatar_${cleanEmail}`) || (currentUser.id ? localStorage.getItem(`interntrack_avatar_${currentUser.id}`) : '') || '';
+          if (!freshStudent.avatarUrl && storedAvatar) {
+            freshStudent.avatarUrl = storedAvatar;
+          }
+          setCurrentUser((prev) => (prev ? {
+            ...prev,
+            avatarUrl: prev.avatarUrl || freshStudent.avatarUrl || storedAvatar,
+            studentProfile: {
+              ...freshStudent,
+              avatarUrl: freshStudent.avatarUrl || prev.avatarUrl || storedAvatar,
+            },
+          } : prev));
         }
       }
     } catch (err) {
@@ -258,7 +270,7 @@ export default function App() {
           buId: studentRecord.buId || extractStudentIdFromEmail(cleanEmail),
           department: studentProfile?.department || authUser.user_metadata?.department || '',
           classBlock: studentRecord.classBlock || '',
-          avatarUrl: studentRecord.avatarUrl || authUser.user_metadata?.avatar_url || '',
+          avatarUrl: studentRecord.avatarUrl || authUser.user_metadata?.avatar_url || localStorage.getItem(`interntrack_avatar_${cleanEmail}`) || (authUserId ? localStorage.getItem(`interntrack_avatar_${authUserId}`) : null) || '',
           studentProfile: studentRecord,
         };
         setActiveTab('student-portal');
@@ -275,7 +287,7 @@ export default function App() {
           buId: coordRecord.bu_id || authUser.user_metadata?.bu_id || '',
           department: coordRecord.department || '',
           classBlock: '',
-          avatarUrl: coordRecord.avatar_url || authUser.user_metadata?.avatar_url || '',
+          avatarUrl: coordRecord.avatar_url || authUser.user_metadata?.avatar_url || localStorage.getItem(`interntrack_avatar_${cleanEmail}`) || (authUserId ? localStorage.getItem(`interntrack_avatar_${authUserId}`) : null) || '',
         };
         setActiveTab('dashboard');
         return apply({ status: 'COORDINATOR', user: coordUser, coordinator: coordRecord }, coordUser);
@@ -584,6 +596,74 @@ export default function App() {
     newPassword?: string;
   }) => {
     if (!currentUser) return;
+    const cleanEmail = currentUser.email.toLowerCase().trim();
+
+    // 1. Immediately cache in localStorage for instant retention across reloads & sessions
+    if (updatedData.avatarUrl !== undefined) {
+      if (updatedData.avatarUrl.trim()) {
+        localStorage.setItem(`interntrack_avatar_${cleanEmail}`, updatedData.avatarUrl.trim());
+        if (currentUser.id) localStorage.setItem(`interntrack_avatar_${currentUser.id}`, updatedData.avatarUrl.trim());
+      } else {
+        localStorage.removeItem(`interntrack_avatar_${cleanEmail}`);
+        if (currentUser.id) localStorage.removeItem(`interntrack_avatar_${currentUser.id}`);
+      }
+    }
+
+    // 2. Direct client-side Supabase Auth update
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.auth.updateUser({
+          data: {
+            full_name: updatedData.fullName,
+            avatar_url: updatedData.avatarUrl,
+          },
+          ...(updatedData.newPassword && updatedData.newPassword.trim()
+            ? { password: updatedData.newPassword.trim() }
+            : {}),
+        });
+      } catch (authErr) {
+        console.warn('Supabase auth.updateUser note:', authErr);
+      }
+
+      // Also persist to Supabase tables directly
+      try {
+        if (currentUser.role === 'student') {
+          await supabase
+            .from('student_profiles')
+            .upsert({
+              id: currentUser.id,
+              email: cleanEmail,
+              full_name: updatedData.fullName,
+              avatar_url: updatedData.avatarUrl,
+            }, { onConflict: 'email' });
+
+          await supabase
+            .from('students')
+            .update({
+              full_name: updatedData.fullName,
+            })
+            .or(`id.eq.${currentUser.id},auth_user_id.eq.${currentUser.id}`);
+        } else if (currentUser.role === 'coordinator') {
+          await supabase
+            .from('coordinator_profiles')
+            .upsert({
+              id: currentUser.id,
+              email: cleanEmail,
+              full_name: updatedData.fullName,
+              avatar_url: updatedData.avatarUrl,
+            }, { onConflict: 'email' });
+
+          await supabase
+            .from('coordinators')
+            .update({
+              full_name: updatedData.fullName,
+            })
+            .or(`id.eq.${currentUser.id},auth_user_id.eq.${currentUser.id}`);
+        }
+      } catch (dbErr) {
+        console.warn('Direct Supabase profile db update note:', dbErr);
+      }
+    }
     const res = await fetch('/api/auth/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -597,14 +677,29 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to update profile');
 
-    setCurrentUser((prev) =>
-      prev
-        ? {
-            ...prev,
-            fullName: updatedData.fullName,
-            avatarUrl: updatedData.avatarUrl,
-          }
-        : null
+    setCurrentUser((prev) => {
+      if (!prev) return null;
+      const updated = {
+        ...prev,
+        fullName: updatedData.fullName,
+        avatarUrl: updatedData.avatarUrl,
+      };
+      if (updated.studentProfile) {
+        updated.studentProfile = {
+          ...updated.studentProfile,
+          fullName: updatedData.fullName,
+          avatarUrl: updatedData.avatarUrl,
+        };
+      }
+      return updated;
+    });
+
+    setStudents((prev) =>
+      prev.map((s) =>
+        s.id === currentUser.id || s.email.toLowerCase() === cleanEmail
+          ? { ...s, fullName: updatedData.fullName, avatarUrl: updatedData.avatarUrl }
+          : s
+      )
     );
     await refreshData();
   };

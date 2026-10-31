@@ -1,14 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   User as UserIcon,
-  Camera,
   Lock,
   CheckCircle2,
   AlertCircle,
   Eye,
   EyeOff,
-  Upload,
   RefreshCw,
   ShieldCheck,
   GraduationCap,
@@ -111,7 +109,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   // Form states
   const [fullName, setFullName] = useState(currentUser.fullName);
-  const [avatarUrl, setAvatarUrl] = useState(currentUser.avatarUrl || '');
+  const [avatarUrl, setAvatarUrl] = useState(() => {
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    const stored = (cleanEmail && localStorage.getItem(`interntrack_avatar_${cleanEmail}`)) ||
+      (currentUser.id && localStorage.getItem(`interntrack_avatar_${currentUser.id}`));
+    return currentUser.avatarUrl || stored || '';
+  });
   const [customUrlInput, setCustomUrlInput] = useState('');
   const [showUrlField, setShowUrlField] = useState(false);
 
@@ -129,42 +132,58 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
   const [avatarAnimationKey, setAvatarAnimationKey] = useState(0);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   // Sync state whenever currentUser changes
   useEffect(() => {
     setFullName(currentUser.fullName);
-    setAvatarUrl(currentUser.avatarUrl || '');
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    const stored = (cleanEmail && localStorage.getItem(`interntrack_avatar_${cleanEmail}`)) ||
+      (currentUser.id && localStorage.getItem(`interntrack_avatar_${currentUser.id}`));
+    setAvatarUrl(currentUser.avatarUrl || stored || '');
   }, [currentUser]);
+
+  const handleSelectPreset = (presetPath: string) => {
+    playFeedbackSound('pop');
+    setAvatarUrl(presetPath);
+    setAvatarAnimationKey((prev) => prev + 1);
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    if (cleanEmail) {
+      localStorage.setItem(`interntrack_avatar_${cleanEmail}`, presetPath);
+    }
+    if (currentUser.id) {
+      localStorage.setItem(`interntrack_avatar_${currentUser.id}`, presetPath);
+    }
+    onUpdateProfile({
+      fullName: fullName.trim() || currentUser.fullName,
+      avatarUrl: presetPath,
+    }).then(() => {
+      setSuccessFeedback('Avatar updated and retained as account avatar!');
+      setTimeout(() => setSuccessFeedback(null), 3000);
+    }).catch((err) => {
+      console.warn('Auto-save preset avatar note:', err);
+    });
+  };
 
   const handleResetToBlank = () => {
     playFeedbackSound('pop');
     setAvatarUrl('');
     setCustomUrlInput('');
     setShowUrlField(false);
-  };
-
-  if (!isOpen) return null;
-
-  // File upload reader simulation
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 3 * 1024 * 1024) {
-        setErrorFeedback('Image size must be less than 3MB');
-        return;
-      }
-      playFeedbackSound('pop');
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setAvatarUrl(event.target.result as string);
-          setAvatarAnimationKey((prev) => prev + 1);
-          setErrorFeedback(null);
-        }
-      };
-      reader.readAsDataURL(file);
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    if (cleanEmail) {
+      localStorage.removeItem(`interntrack_avatar_${cleanEmail}`);
     }
+    if (currentUser.id) {
+      localStorage.removeItem(`interntrack_avatar_${currentUser.id}`);
+    }
+    onUpdateProfile({
+      fullName: fullName.trim() || currentUser.fullName,
+      avatarUrl: '',
+    }).then(() => {
+      setSuccessFeedback('Avatar reset to blank icon.');
+      setTimeout(() => setSuccessFeedback(null), 3000);
+    }).catch((err) => {
+      console.warn('Reset avatar note:', err);
+    });
   };
 
   // Password strength calculator
@@ -207,6 +226,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      const cleanEmail = currentUser.email?.toLowerCase().trim();
+      if (avatarUrl && avatarUrl.trim()) {
+        if (cleanEmail) localStorage.setItem(`interntrack_avatar_${cleanEmail}`, avatarUrl.trim());
+        if (currentUser.id) localStorage.setItem(`interntrack_avatar_${currentUser.id}`, avatarUrl.trim());
+      } else {
+        if (cleanEmail) localStorage.removeItem(`interntrack_avatar_${cleanEmail}`);
+        if (currentUser.id) localStorage.removeItem(`interntrack_avatar_${currentUser.id}`);
+      }
+
       await onUpdateProfile({
         fullName: fullName.trim(),
         avatarUrl,
@@ -369,25 +397,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         </div>
                       )}
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        playFeedbackSound('pop');
-                        fileInputRef.current?.click();
-                      }}
-                      className="absolute -bottom-1 -right-1 p-2 rounded-xl bg-[#020617] text-white shadow-md hover:bg-[#F26522] transition-colors duration-150 active:scale-90 cursor-pointer border border-white/20"
-                      title="Upload new image"
-                    >
-                      <Camera className="w-3.5 h-3.5" />
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
                   </div>
 
                   <div className="space-y-1.5 text-center sm:text-left flex-1">
@@ -396,26 +405,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         Profile Image & Portrait
                       </h4>
                       <span className="px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-extrabold border border-slate-300 dark:border-slate-700">
-                        {avatarUrl ? 'Custom Photo Active' : 'Blank Genderless Icon'}
+                        {avatarUrl ? 'Avatar Icon Active' : 'Blank Genderless Icon'}
                       </span>
                     </div>
                     <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
-                      By default, an official blank genderless silhouette is displayed. You can upload a photo or provide a custom web link.
+                      Choose an avatar icon from the presets below to personalize your account profile. Your selected avatar will be retained across your entire session.
                     </p>
 
                     <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          playFeedbackSound('pop');
-                          fileInputRef.current?.click();
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold border border-slate-200 dark:border-slate-700 transition-all duration-150 active:scale-95 flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                      >
-                        <Upload className="w-3 h-3 text-[#F26522]" />
-                        <span>Upload Photo</span>
-                      </button>
-
                       <button
                         type="button"
                         onClick={() => {
@@ -449,7 +446,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       Choose Preset Avatar Icon:
                     </label>
                     <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                      Click to select
+                      Click to set as account avatar
                     </span>
                   </div>
 
@@ -463,12 +460,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         <button
                           key={preset.id}
                           type="button"
-                          onClick={() => {
-                            playFeedbackSound('pop');
-                            setAvatarUrl(preset.path);
-                            setAvatarAnimationKey((prev) => prev + 1);
-                          }}
-                          className={`group relative p-2 rounded-2xl border-2 transition-all duration-150 flex flex-col items-center gap-1.5 cursor-pointer active:scale-95 ${
+                          title={preset.label}
+                          onClick={() => handleSelectPreset(preset.path)}
+                          className={`group relative p-2 rounded-2xl border-2 transition-all duration-150 flex items-center justify-center cursor-pointer active:scale-95 ${
                             isSelected
                               ? 'border-[#F26522] bg-orange-50/60 dark:bg-orange-950/30 shadow-md ring-2 ring-[#F26522]/30'
                               : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60'
@@ -477,19 +471,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                           <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center p-1">
                             <img
                               src={preset.src}
-                              alt={preset.label}
+                              alt="Avatar"
                               className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-110"
                             />
                           </div>
-                          <span
-                            className={`text-[11px] font-bold ${
-                              isSelected
-                                ? 'text-[#F26522]'
-                                : 'text-slate-600 dark:text-slate-400'
-                            }`}
-                          >
-                            {preset.label}
-                          </span>
                           {isSelected && (
                             <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#F26522] text-white rounded-full flex items-center justify-center shadow-xs">
                               <Check className="w-2.5 h-2.5 stroke-[3]" />

@@ -568,7 +568,7 @@ async function findOrLoadStudent(identifier: string): Promise<Student | null> {
           status: (meta.status as any) || 'active',
           enrollmentStatus: (meta.enrollment_status as any) || 'not_enrolled',
           deploymentApproved: Boolean(meta.deployment_approved),
-          avatarUrl: meta.avatar_url || '',
+          avatarUrl: meta.avatar_url || sRow?.avatar_url || '',
           groupId: sRow?.group_id || meta.group_id || undefined,
           groupName: meta.group_name || undefined,
           pendingGroupInvitation: meta.pending_group_invitation || undefined,
@@ -2966,7 +2966,36 @@ app.use((req, res, next) => {
   // Profile Settings: Update display name, avatar, and password
   app.post('/api/auth/profile', async (req: Request, res: Response) => {
     const { userId, fullName, avatarUrl, newPassword } = req.body;
-    const user = users.find((u) => u.id === userId);
+    let user = users.find(
+      (u) =>
+        u.id === userId ||
+        (u.email && u.email.toLowerCase() === String(userId).toLowerCase()) ||
+        u.buId === userId
+    );
+
+    if (!user) {
+      const cleanId = String(userId || '').toLowerCase().trim();
+      const st = students.find(
+        (s) =>
+          s.id === userId ||
+          s.email.toLowerCase() === cleanId ||
+          s.buId === userId
+      );
+      if (st) {
+        user = {
+          id: st.id,
+          email: st.email,
+          fullName: st.fullName,
+          role: 'student',
+          buId: st.buId,
+          department: st.college,
+          classBlock: st.classBlock,
+          avatarUrl: st.avatarUrl,
+        };
+        users.push(user);
+      }
+    }
+
     if (!user) {
       return res.status(404).json({ error: 'User account not found' });
     }
@@ -2981,7 +3010,12 @@ app.use((req, res, next) => {
     let linkedStudent: Student | undefined;
     // If user is a student, also sync their student record
     if (user.role === 'student') {
-      linkedStudent = students.find((s) => s.email === user.email || s.buId === user.buId);
+      linkedStudent = students.find(
+        (s) =>
+          s.id === user.id ||
+          (s.email && s.email.toLowerCase() === user.email.toLowerCase()) ||
+          s.buId === user.buId
+      );
       if (linkedStudent) {
         if (fullName && fullName.trim()) linkedStudent.fullName = fullName.trim();
         if (typeof avatarUrl === 'string') linkedStudent.avatarUrl = avatarUrl.trim();
@@ -2990,7 +3024,12 @@ app.use((req, res, next) => {
 
     // Sync any attendance log student names
     attendanceLogs.forEach((log) => {
-      const student = students.find((s) => s.email === user.email || s.buId === user.buId);
+      const student = students.find(
+        (s) =>
+          s.id === user?.id ||
+          (s.email && s.email.toLowerCase() === user?.email.toLowerCase()) ||
+          s.buId === user?.buId
+      );
       if (student && log.studentId === student.id && fullName) {
         log.studentName = fullName.trim();
       }

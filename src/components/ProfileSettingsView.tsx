@@ -1,13 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   User as UserIcon,
-  Camera,
   Lock,
   CheckCircle2,
   AlertCircle,
   Eye,
   EyeOff,
-  Upload,
   RefreshCw,
   Save,
   ArrowLeft,
@@ -55,9 +53,23 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
 
   // Form states
   const [fullName, setFullName] = useState(currentUser.fullName);
-  const [avatarUrl, setAvatarUrl] = useState(currentUser.avatarUrl || '');
+  const [avatarUrl, setAvatarUrl] = useState(() => {
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    const stored = (cleanEmail && localStorage.getItem(`interntrack_avatar_${cleanEmail}`)) ||
+      (currentUser.id && localStorage.getItem(`interntrack_avatar_${currentUser.id}`));
+    return currentUser.avatarUrl || stored || '';
+  });
   const [customUrlInput, setCustomUrlInput] = useState('');
   const [showUrlField, setShowUrlField] = useState(false);
+
+  // Sync state whenever currentUser changes
+  useEffect(() => {
+    setFullName(currentUser.fullName);
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    const stored = (cleanEmail && localStorage.getItem(`interntrack_avatar_${cleanEmail}`)) ||
+      (currentUser.id && localStorage.getItem(`interntrack_avatar_${currentUser.id}`));
+    setAvatarUrl(currentUser.avatarUrl || stored || '');
+  }, [currentUser]);
 
   // Password fields
   const [newPassword, setNewPassword] = useState('');
@@ -70,30 +82,47 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
   const [successFeedback, setSuccessFeedback] = useState<string | null>(null);
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 3 * 1024 * 1024) {
-        setErrorFeedback('Image size must be less than 3MB');
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setAvatarUrl(event.target.result as string);
-          setErrorFeedback(null);
-        }
-      };
-      reader.readAsDataURL(file);
+  const handleSelectPreset = (presetPath: string) => {
+    setAvatarUrl(presetPath);
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    if (cleanEmail) {
+      localStorage.setItem(`interntrack_avatar_${cleanEmail}`, presetPath);
     }
+    if (currentUser.id) {
+      localStorage.setItem(`interntrack_avatar_${currentUser.id}`, presetPath);
+    }
+    // Auto-save to account so it retains as the account avatar
+    onUpdateProfile({
+      fullName: fullName.trim() || currentUser.fullName,
+      avatarUrl: presetPath,
+    }).then(() => {
+      setSuccessFeedback('Avatar updated and retained as account avatar!');
+      setTimeout(() => setSuccessFeedback(null), 3000);
+    }).catch((err) => {
+      console.warn('Auto-save preset avatar note:', err);
+    });
   };
 
   const handleResetToBlank = () => {
     setAvatarUrl('');
     setCustomUrlInput('');
     setShowUrlField(false);
+    const cleanEmail = currentUser.email?.toLowerCase().trim();
+    if (cleanEmail) {
+      localStorage.removeItem(`interntrack_avatar_${cleanEmail}`);
+    }
+    if (currentUser.id) {
+      localStorage.removeItem(`interntrack_avatar_${currentUser.id}`);
+    }
+    onUpdateProfile({
+      fullName: fullName.trim() || currentUser.fullName,
+      avatarUrl: '',
+    }).then(() => {
+      setSuccessFeedback('Avatar reset to blank icon.');
+      setTimeout(() => setSuccessFeedback(null), 3000);
+    }).catch((err) => {
+      console.warn('Reset avatar note:', err);
+    });
   };
 
   const calculateStrength = (pass: string) => {
@@ -135,6 +164,15 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
 
     setIsSubmitting(true);
     try {
+      const cleanEmail = currentUser.email?.toLowerCase().trim();
+      if (avatarUrl && avatarUrl.trim()) {
+        if (cleanEmail) localStorage.setItem(`interntrack_avatar_${cleanEmail}`, avatarUrl.trim());
+        if (currentUser.id) localStorage.setItem(`interntrack_avatar_${currentUser.id}`, avatarUrl.trim());
+      } else {
+        if (cleanEmail) localStorage.removeItem(`interntrack_avatar_${cleanEmail}`);
+        if (currentUser.id) localStorage.removeItem(`interntrack_avatar_${currentUser.id}`);
+      }
+
       await onUpdateProfile({
         fullName: fullName.trim(),
         avatarUrl,
@@ -271,22 +309,6 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                         <UserIcon className="w-12 h-12 text-slate-500 dark:text-slate-400 stroke-[1.5]" />
                       )}
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="absolute -bottom-1 -right-1 p-2 rounded-xl bg-[#020617] text-white shadow-md hover:bg-[#F26522] transition-colors border border-white/20 active:scale-90 cursor-pointer"
-                      title="Upload custom image"
-                    >
-                      <Camera className="w-3.5 h-3.5" />
-                    </button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
                   </div>
 
                   <div className="space-y-1.5 flex-1 text-center sm:text-left">
@@ -295,23 +317,14 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                         User Profile Avatar
                       </h3>
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        {avatarUrl ? 'Custom Image' : 'Blank Genderless Icon'}
+                        {avatarUrl ? 'Avatar Icon Active' : 'Blank Genderless Icon'}
                       </span>
                     </div>
                     <p className="text-slate-500 dark:text-slate-400 text-xs max-w-lg leading-relaxed">
-                      By default, an official blank genderless silhouette is displayed across the platform. You may optionally upload your personal image or link an external photo.
+                      Choose an avatar icon from the presets below to personalize your account profile. Your selected avatar will be retained across your entire session.
                     </p>
 
                     <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1.5 cursor-pointer shadow-xs"
-                      >
-                        <Upload className="w-3.5 h-3.5 text-[#F26522]" />
-                        <span>Upload Photo</span>
-                      </button>
-
                       <button
                         type="button"
                         onClick={() => setShowUrlField(!showUrlField)}
@@ -341,11 +354,11 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                       Choose Preset Avatar Icon:
                     </label>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Select one of the official avatar presets
+                      Click an icon to set as your account avatar
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-lg">
+                  <div className="grid grid-cols-4 gap-3 max-w-sm sm:max-w-md">
                     {PRESET_AVATARS.map((preset) => {
                       const isSelected =
                         avatarUrl === preset.path ||
@@ -355,29 +368,21 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                         <button
                           key={preset.id}
                           type="button"
-                          onClick={() => setAvatarUrl(preset.path)}
-                          className={`group relative p-2.5 rounded-2xl border-2 transition-all duration-150 flex flex-col items-center gap-2 cursor-pointer active:scale-95 ${
+                          title={preset.label}
+                          onClick={() => handleSelectPreset(preset.path)}
+                          className={`group relative p-2.5 rounded-2xl border-2 transition-all duration-150 flex items-center justify-center cursor-pointer active:scale-95 ${
                             isSelected
                               ? 'border-[#F26522] bg-orange-50/60 dark:bg-orange-950/30 shadow-md ring-2 ring-[#F26522]/30'
                               : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60'
                           }`}
                         >
-                          <div className="w-16 h-16 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800/80 flex items-center justify-center p-1.5">
+                          <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800/80 flex items-center justify-center p-1.5">
                             <img
                               src={preset.src}
-                              alt={preset.label}
+                              alt="Avatar"
                               className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-110"
                             />
                           </div>
-                          <span
-                            className={`text-xs font-bold ${
-                              isSelected
-                                ? 'text-[#F26522]'
-                                : 'text-slate-700 dark:text-slate-300'
-                            }`}
-                          >
-                            {preset.label}
-                          </span>
                           {isSelected && (
                             <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#F26522] text-white rounded-full flex items-center justify-center shadow-xs">
                               <Check className="w-3 h-3 stroke-[3]" />

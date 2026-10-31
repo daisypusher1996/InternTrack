@@ -259,7 +259,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                 ) : (
                   <>
                     <Brain className="w-4 h-4 text-[#F26522]" />
-                    <span>Synthesize Weekly Group Highlight</span>
+                    <span>Synthesize Weekly Highlight</span>
                   </>
                 )}
               </button>
