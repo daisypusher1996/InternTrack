@@ -1,16 +1,18 @@
 import React from 'react';
+import {
+  GraduationCap,
+  LayoutDashboard,
+  UserPlus,
+  Clock,
+  FileText,
+  Brain,
+  Archive,
+  Bell,
+  X,
+} from './icons';
 import { User } from '../types';
 import { ThemeToggle } from './ThemeToggle';
 import FoldText from './FoldText';
-import {
-  BauhausArchive,
-  BauhausUserPlus,
-  BauhausClock,
-  BauhausFileText,
-  BauhausBrain,
-  BauhausGraduationCap,
-  BauhausClose,
-} from './BauhausIcon';
 
 interface SidebarProps {
   activeTab: string;
@@ -42,15 +44,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Navigation Items
   const navItems = isCoordinator
     ? [
-        { id: 'archive', label: 'Record Archive', icon: BauhausArchive, badge: 'Batches' },
-        { id: 'enrollment', label: 'Enrollment & Deployment', icon: BauhausUserPlus },
-        { id: 'attendance', label: 'Time & Attendance DTR', icon: BauhausClock },
-        { id: 'accomplishments', label: 'Daily Accomplishments', icon: BauhausFileText },
-        { id: 'ai-analytics', label: 'AI Analytics & Alerts', icon: BauhausBrain, badge: 'AI' },
+        { id: 'archive', label: 'Record Archive', icon: Archive, badge: 'Batches' },
+        { id: 'enrollment', label: 'Enrollment & Deployment', icon: UserPlus },
+        { id: 'attendance', label: 'Time & Attendance DTR', icon: Clock },
+        { id: 'accomplishments', label: 'Daily Accomplishments', icon: FileText },
+        { id: 'ai-analytics', label: 'AI Analytics & Alerts', icon: Brain, badge: 'AI' },
       ]
     : [
-        { id: 'student-portal', label: 'My Student Portal & DTR', icon: BauhausGraduationCap },
-        { id: 'accomplishments', label: 'Daily Accomplishments', icon: BauhausFileText },
+        { id: 'student-portal', label: 'My Student Portal & DTR', icon: GraduationCap },
+        { id: 'accomplishments', label: 'Daily Accomplishments', icon: FileText },
       ];
 
   const handleNavClick = (tabId: string) => {
@@ -111,7 +113,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="p-1.5 rounded-lg text-slate-400 hover:text-white active:scale-90 transition-transform cursor-pointer"
               aria-label="Close Navigation"
             >
-              <BauhausClose className="w-5 h-5" />
+              <X className="w-5 h-5" />
             </button>
           </div>
 

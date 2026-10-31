@@ -9,7 +9,7 @@ import {
   Shield,
   Layers,
   Brain,
-} from 'lucide-react';
+} from './icons';
 
 export const SchemaExplorer: React.FC = () => {
   const [copied, setCopied] = useState(false);

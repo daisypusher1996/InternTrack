@@ -8,7 +8,7 @@ import {
   Download,
   Loader2,
   Save,
-} from 'lucide-react';
+} from './icons';
 import {
   BauhausGraduationCap as GraduationCap,
   BauhausBuilding2 as Building2,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User as UserIcon, Save, Fingerprint } from 'lucide-react';
+import { User as UserIcon, Save, Fingerprint } from './icons';
 import {
   BauhausLock,
   BauhausCheckCircle,

@@ -7,7 +7,7 @@ import {
   Info,
   Download,
   Loader2,
-} from 'lucide-react';
+} from './icons';
 import {
   BauhausFileText,
   BauhausCheckCircle,

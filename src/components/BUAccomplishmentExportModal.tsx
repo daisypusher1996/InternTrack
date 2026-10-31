@@ -14,7 +14,7 @@ import {
   Award,
   Clock,
   Sparkles as _NoSparkles, // unused
-} from 'lucide-react';
+} from './icons';
 import { Student, AttendanceLog, AccomplishmentReport } from '../types';
 import { exportBUAccomplishmentDocx, BUDocxExportOptions } from '../lib/buDocxExport';
 

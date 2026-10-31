@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Clock, MapPin, Tag, ExternalLink, ChevronRight } from 'lucide-react';
+import { Calendar, Clock, MapPin, Tag, ExternalLink, ChevronRight } from './icons';
 
 export const IBUEventsView: React.FC<{ onNavigateToTab: (tab: string) => void }> = ({ onNavigateToTab }) => {
   const events = [

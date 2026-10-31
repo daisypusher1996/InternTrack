@@ -14,7 +14,7 @@ import {
   LogIn,
   LogOut,
   Shield,
-} from 'lucide-react';
+} from './icons';
 import { User } from '../types';
 
 interface NavbarProps {

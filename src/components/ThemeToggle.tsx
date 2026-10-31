@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sun, Moon } from 'lucide-react';
+import { Sun, Moon } from './icons';
 
 interface ThemeToggleProps {
   className?: string;

@@ -14,7 +14,7 @@ import {
   Activity,
   UserX,
   Laptop,
-} from 'lucide-react';
+} from './icons';
 import { Group, Student, AttendanceAlert, AISummary } from '../types';
 
 interface AIAnalyticsViewProps {

@@ -5,7 +5,7 @@ import {
   Info,
   ExternalLink,
   Loader2,
-} from 'lucide-react';
+} from './icons';
 import {
   BauhausClock,
   BauhausLogIn,

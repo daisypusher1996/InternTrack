@@ -16,7 +16,7 @@ import {
   Mail,
   Fingerprint,
   Award,
-} from 'lucide-react';
+} from './icons';
 import { User } from '../types';
 import gamerIcon from '../public/gamer.png';
 import womanIcon from '../public/woman.png';

@@ -9,7 +9,7 @@ import {
   Download,
   User as UserIcon,
   Loader2,
-} from 'lucide-react';
+} from './icons';
 import {
   BauhausUsers as Users,
   BauhausBuilding2 as Building2,

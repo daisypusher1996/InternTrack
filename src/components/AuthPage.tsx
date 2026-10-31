@@ -18,7 +18,7 @@ import {
   FileText,
   Sparkles,
   ArrowRight,
-} from 'lucide-react';
+} from './icons';
 import { Company, Student, BU_COURSES } from '../types';
 import { ThemeToggle } from './ThemeToggle';
 import FoldText from './FoldText';

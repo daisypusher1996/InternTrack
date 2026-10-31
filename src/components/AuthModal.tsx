@@ -10,7 +10,7 @@ import {
   Eye,
   EyeOff,
   Check,
-} from 'lucide-react';
+} from './icons';
 import { User, Company, Student, BU_COURSES } from '../types';
 import { signInWithGoogle, extractStudentIdFromEmail } from '../lib/supabase';
 import FoldText from './FoldText';

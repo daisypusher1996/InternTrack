@@ -16,7 +16,7 @@ import {
   Info,
   MapPin,
   User as UserIcon,
-} from 'lucide-react';
+} from './icons';
 import { Student, Group, Company } from '../types';
 
 interface EnrollmentModuleProps {

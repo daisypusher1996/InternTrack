@@ -10,7 +10,7 @@ import {
   Layers,
   Send,
   UserCheck,
-} from 'lucide-react';
+} from './icons';
 import { ISOEvaluation } from '../types';
 
 export const ISOEvaluationView: React.FC = () => {

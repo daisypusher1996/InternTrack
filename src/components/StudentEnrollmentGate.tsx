@@ -23,7 +23,7 @@ import {
   Mail,
   Check,
   Loader2,
-} from 'lucide-react';
+} from './icons';
 import { Student, Company, User, CoordinatorInfo, Group, GroupMemberInvitation } from '../types';
 import { BUMascotWelcome } from './BUMascotWelcome';
 

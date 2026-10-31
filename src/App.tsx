@@ -12,7 +12,7 @@ import { AuthPage } from './components/AuthPage';
 import { StudentEnrollmentGate } from './components/StudentEnrollmentGate';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ProfileSettingsView } from './components/ProfileSettingsView';
-import { User as UserIcon } from 'lucide-react';
+import { User as UserIcon } from './components/icons';
 import {
   BauhausBell,
   BauhausMenu,

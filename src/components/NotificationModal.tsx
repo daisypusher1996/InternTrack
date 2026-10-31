@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, AlertTriangle, Bell, Check, ShieldAlert, Mail } from 'lucide-react';
+import { X, AlertTriangle, Bell, Check, ShieldAlert, Mail } from './icons';
 import { AttendanceAlert } from '../types';
 
 interface NotificationModalProps {

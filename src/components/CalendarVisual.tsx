@@ -14,7 +14,7 @@ import {
   Home,
   Send,
   Check,
-} from 'lucide-react';
+} from './icons';
 import { Student, AttendanceLog, AccomplishmentReport } from '../types';
 import { requestOvertimeToSupabase, markFridayWfhInSupabase } from '../lib/supabase';
 

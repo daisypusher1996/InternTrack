@@ -1,5 +1,5 @@
 import React from 'react';
-import { GraduationCap, Building2, AlertCircle } from 'lucide-react';
+import { GraduationCap, Building2, AlertCircle } from './icons';
 import ShinyText from './ShinyText';
 
 interface BUMascotWelcomeProps {

@@ -21,7 +21,7 @@ import {
   BookOpen,
   Award,
   User as UserIcon,
-} from 'lucide-react';
+} from './icons';
 import { ClassBatch, Student, Company, Group } from '../types';
 
 interface RecordArchiveViewProps {

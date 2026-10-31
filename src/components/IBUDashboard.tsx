@@ -25,7 +25,7 @@ import {
   Info,
   X,
   Send,
-} from 'lucide-react';
+} from './icons';
 import { User, Student, AttendanceLog, AccomplishmentReport, AttendanceAlert } from '../types';
 
 interface IBUDashboardProps {

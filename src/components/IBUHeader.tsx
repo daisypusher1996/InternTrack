@@ -18,7 +18,7 @@ import {
   Archive,
   Brain,
   Check,
-} from 'lucide-react';
+} from './icons';
 import { User } from '../types';
 import { ThemeToggle } from './ThemeToggle';
 
