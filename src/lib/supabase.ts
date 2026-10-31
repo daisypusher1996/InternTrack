@@ -1175,7 +1175,31 @@ export async function fetchTodayAttendanceRecords(
       .order('created_at', { ascending: true });
 
     if (error) throw error;
-    return { records: (data as TodayAttendanceRecord[]) || [], error: null };
+    const rawList = ((data as TodayAttendanceRecord[]) || []);
+
+    // Sort chronologically by time_in or created_at
+    const sorted = [...rawList].sort((a, b) => {
+      const timeA = new Date(a.time_in || a.created_at || 0).getTime();
+      const timeB = new Date(b.time_in || b.created_at || 0).getTime();
+      return timeA - timeB;
+    });
+
+    // Deduplicate any accidental duplicate punches (records within 60 seconds of each other)
+    const deduped: TodayAttendanceRecord[] = [];
+    for (const rec of sorted) {
+      const recTime = new Date(rec.time_in || rec.created_at || 0).getTime();
+      const isDuplicate = deduped.some((existing) => {
+        const existingTime = new Date(existing.time_in || existing.created_at || 0).getTime();
+        return Math.abs(recTime - existingTime) < 60000;
+      });
+      if (!isDuplicate) {
+        deduped.push(rec);
+      }
+    }
+
+    // Daily maximum: strictly 2 shifts per day (Morning = 1st, Afternoon = 2nd). No third for a day.
+    const cleanRecords = deduped.slice(0, 2);
+    return { records: cleanRecords, error: null };
   } catch (err: any) {
     console.error('fetchTodayAttendanceRecords error:', err);
     return { records: [], error: err };
@@ -1223,8 +1247,8 @@ export async function punchTimeInToSupabase(params: {
 
   const currentMachine = evaluateAttendanceState(currentRecords);
   if (!currentMachine.isTimeInEnabled) {
-    if (currentMachine.state === 'E') {
-      throw new Error('Daily maximum reached: You have already completed 2 duty shifts today.');
+    if (currentMachine.state === 'E' || currentRecords.length >= 2) {
+      throw new Error('Daily maximum reached: You have already completed 2 duty shifts today. No third shift is allowed.');
     }
     throw new Error('Cannot punch Time-In: A duty shift is currently active and requires Time-Out first.');
   }
@@ -1249,7 +1273,7 @@ export async function punchTimeInToSupabase(params: {
 
   if (insertErr) throw insertErr;
 
-  // 3. Sync to backend API for session cache
+  // 3. Sync to backend API for session cache (skipSupabaseSync avoids duplicate insertion)
   try {
     await fetch('/api/attendance/time-in', {
       method: 'POST',
@@ -1262,6 +1286,7 @@ export async function punchTimeInToSupabase(params: {
         shiftNumber: shiftNum,
         dutyStart: params.dutyStart,
         dutyEnd: params.dutyEnd,
+        skipSupabaseSync: true,
       }),
     });
   } catch (apiErr) {
@@ -1273,7 +1298,7 @@ export async function punchTimeInToSupabase(params: {
 
   return {
     record: (inserted as TodayAttendanceRecord),
-    records: freshRecords.length > 0 ? freshRecords : [...currentRecords, inserted],
+    records: freshRecords.length > 0 ? freshRecords : [...currentRecords, inserted].slice(0, 2),
     error: null,
   };
 }
@@ -1357,7 +1382,7 @@ export async function punchTimeOutToSupabase(params: {
     console.warn('Completed hours increment note:', stErr);
   }
 
-  // 4. Sync to backend API for server state
+  // 4. Sync to backend API for server state (skipSupabaseSync avoids duplicate closing/insertion)
   try {
     await fetch('/api/attendance/time-out', {
       method: 'POST',
@@ -1367,6 +1392,7 @@ export async function punchTimeOutToSupabase(params: {
         remarks: params.remarks,
         dtrImageLink: params.dtrImageLink,
         shiftNumber: currentMachine.state === 'D' ? 2 : 1,
+        skipSupabaseSync: true,
       }),
     });
   } catch (apiErr) {
@@ -1378,7 +1404,7 @@ export async function punchTimeOutToSupabase(params: {
 
   return {
     record: (updated as TodayAttendanceRecord),
-    records: freshRecords.length > 0 ? freshRecords : currentRecords.map((r) => (r.id === targetRecord.id ? updated : r)),
+    records: freshRecords.length > 0 ? freshRecords : currentRecords.map((r) => (r.id === targetRecord.id ? updated : r)).slice(0, 2),
     error: null,
   };
 }

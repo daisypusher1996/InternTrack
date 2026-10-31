@@ -974,7 +974,7 @@ export default function App() {
     const res = await fetch('/api/attendance/time-in', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId, remarks, dtrImageLink, shiftNumber: shiftNumber || 1 }),
+      body: JSON.stringify({ studentId, remarks, dtrImageLink, shiftNumber: shiftNumber || 1, skipSupabaseSync: true }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to record time-in');
@@ -1001,7 +1001,7 @@ export default function App() {
     const res = await fetch('/api/attendance/time-out', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId, remarks, dtrImageLink, shiftNumber }),
+      body: JSON.stringify({ studentId, remarks, dtrImageLink, shiftNumber, skipSupabaseSync: true }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to record time-out');

@@ -17,8 +17,10 @@ import {
   Calendar,
   Download,
   Trash2,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
-import { Student, AccomplishmentReport, Group, AttendanceLog } from '../types';
+import { Student, AccomplishmentReport, Group, AttendanceLog, AISummary } from '../types';
 import { BUAccomplishmentExportModal } from './BUAccomplishmentExportModal';
 import { deleteAccomplishmentFromSupabase } from '../lib/supabase';
 
@@ -28,7 +30,7 @@ interface AccomplishmentLoggerProps {
   accomplishmentReports: AccomplishmentReport[];
   onSubmitReport: (reportData: any) => Promise<void>;
   onDeleteReport?: (reportId: string) => Promise<void>;
-  onTriggerGroupSummary: (groupId: string) => void;
+  onTriggerGroupSummary: (groupId: string, studentId?: string) => Promise<any> | void;
   isCoordinator?: boolean;
   attendanceLogs?: AttendanceLog[];
   currentUser?: any;
@@ -50,6 +52,17 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
   // Local reports state for immediate UI feedback on deletion
   const [localReports, setLocalReports] = useState<AccomplishmentReport[]>(accomplishmentReports);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Dynamic AI Weekly Summary state
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [latestSummary, setLatestSummary] = useState<AISummary | null>(() => {
+    try {
+      const saved = localStorage.getItem('interntrack_student_ai_summary');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     setLocalReports(accomplishmentReports);
@@ -84,6 +97,25 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchFilter, setSearchFilter] = useState<string>('');
   const [selectedGroupSummary, setSelectedGroupSummary] = useState<string>(groups[0]?.id || '');
+
+  const handleTriggerSynthesis = async () => {
+    setIsSynthesizing(true);
+    try {
+      const targetGroupId = effectiveStudent?.groupId || '';
+      const targetStudentId = effectiveStudent?.id || '';
+      const res = await onTriggerGroupSummary(targetGroupId, targetStudentId);
+      if (res && (res.aiHighlight || (res as any).highlight)) {
+        setLatestSummary(res);
+        try {
+          localStorage.setItem('interntrack_student_ai_summary', JSON.stringify(res));
+        } catch {}
+      }
+    } catch (err) {
+      console.error('Failed to trigger AI weekly synthesis:', err);
+    } finally {
+      setIsSynthesizing(false);
+    }
+  };
 
   const handleDeleteReport = async (reportId: string, studentId: string, date: string) => {
     const confirmDelete = window.confirm('Are you sure you want to unsubmit / delete this accomplishment report? This will remove the entry from the official logbook.');
@@ -213,13 +245,23 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               </div>
             )}
 
-            {!isCoordinator && effectiveStudent?.groupId && (
+            {!isCoordinator && (
               <button
-                onClick={() => onTriggerGroupSummary(effectiveStudent.groupId!)}
-                className="px-4 py-2.5 rounded-lg bg-[#020617] hover:bg-slate-800 text-white text-xs font-bold transition-all active:scale-95 flex items-center gap-2 shadow-sm hover:shadow-md shrink-0 cursor-pointer"
+                onClick={handleTriggerSynthesis}
+                disabled={isSynthesizing}
+                className="px-4 py-2.5 rounded-lg bg-[#020617] hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold transition-all active:scale-95 flex items-center gap-2 shadow-sm hover:shadow-md shrink-0 cursor-pointer"
               >
-                <Brain className="w-4 h-4 text-[#F26522]" />
-                <span>Synthesize Weekly Group Highlight</span>
+                {isSynthesizing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-[#F26522]" />
+                    <span>Synthesizing AI Highlight...</span>
+                  </>
+                ) : (
+                  <>
+                    <Brain className="w-4 h-4 text-[#F26522]" />
+                    <span>Synthesize Weekly Group Highlight</span>
+                  </>
+                )}
               </button>
             )}
           </div>
@@ -489,23 +531,114 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
             </form>
           </div>
 
-          {/* AI Processing Note */}
+          {/* AI Weekly Synthesis Highlight Card */}
           <div className="space-y-4">
-            <div className="bg-gradient-to-br from-[#020617] to-slate-900 text-white p-5 rounded-2xl shadow-xs space-y-3 border border-slate-800">
-              <span className="px-2.5 py-0.5 rounded-md bg-[#F26522] text-white font-bold text-[10px] uppercase">
-                AI NLP Integration
-              </span>
-              <h3 className="text-sm font-bold text-white">Automated Weekly Group Highlights</h3>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                Practicum coordinators supervising dozens of students face immense manual reading loads. InternTrack feeds these daily accomplishment logs into a Large Language Model (LLM) API to generate concise weekly highlights.
-              </p>
-              <div className="p-3 bg-white/10 dark:bg-slate-800/80 rounded-lg border border-white/20 dark:border-slate-700 text-xs text-slate-200">
-                <strong className="text-white">Example AI Output:</strong>
-                <div className="italic mt-1 text-[#FED7AA]">
-                  "The group maintained consistent attendance and completed the majority of its assigned tasks, with strongest activity in system testing and documentation."
+            {latestSummary ? (
+              <div className="bg-gradient-to-br from-[#020617] to-slate-900 text-white p-5 rounded-2xl shadow-xs space-y-3 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="px-2.5 py-0.5 rounded-md bg-[#F26522] text-white font-bold text-[10px] uppercase tracking-wider">
+                    AI Weekly Synthesis
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Week {latestSummary.weekNumber || 6}
+                  </span>
                 </div>
+
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    {latestSummary.groupName || 'Practicum Weekly Progress Highlight'}
+                  </h3>
+                  <p className="text-xs text-slate-200 italic mt-1.5 leading-relaxed border-l-2 border-[#F26522] pl-3 py-0.5">
+                    "{latestSummary.aiHighlight || (latestSummary as any).highlight}"
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                  <div className="p-2.5 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-[10px] text-slate-400 block">Rendered Duty</span>
+                    <strong className="text-emerald-400 font-mono text-sm font-bold">
+                      {latestSummary.totalHoursRendered}h
+                    </strong>
+                  </div>
+                  <div className="p-2.5 bg-white/5 rounded-lg border border-white/10">
+                    <span className="text-[10px] text-slate-400 block">Completed Tasks</span>
+                    <strong className="text-blue-400 font-mono text-sm font-bold">
+                      {latestSummary.tasksCompleted} / {latestSummary.tasksSubmitted || 1}
+                    </strong>
+                  </div>
+                </div>
+
+                {latestSummary.dominantWorkAreas && latestSummary.dominantWorkAreas.length > 0 && (
+                  <div className="pt-1">
+                    <span className="text-[10px] text-slate-400 block mb-1">Key Focus Areas:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {latestSummary.dominantWorkAreas.map((area, idx) => (
+                        <span key={idx} className="px-2 py-0.5 rounded bg-white/10 text-slate-200 text-[10px] font-semibold">
+                          {area}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {latestSummary.decisionSupportNotes && (
+                  <div className="p-3 bg-white/5 rounded-lg border border-white/10 text-[11px] text-slate-300">
+                    <strong className="text-white block mb-0.5">Coordinator Supervisory Recommendation:</strong>
+                    <p className="text-slate-300 leading-relaxed text-[11px]">
+                      {latestSummary.decisionSupportNotes}
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleTriggerSynthesis}
+                  disabled={isSynthesizing}
+                  className="w-full mt-2 py-2 px-3 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer border border-white/10"
+                >
+                  {isSynthesizing ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#F26522]" />
+                      <span>Updating Synthesis...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-3.5 h-3.5 text-[#F26522]" />
+                      <span>Re-synthesize Weekly Highlight</span>
+                    </>
+                  )}
+                </button>
               </div>
-            </div>
+            ) : isSynthesizing ? (
+              <div className="bg-gradient-to-br from-[#020617] to-slate-900 text-white p-6 rounded-2xl shadow-xs border border-slate-800 text-center space-y-3">
+                <Loader2 className="w-6 h-6 animate-spin text-[#F26522] mx-auto" />
+                <h4 className="text-xs font-bold text-white">Synthesizing Accomplishment Highlights...</h4>
+                <p className="text-[11px] text-slate-400">
+                  Synthesizing daily accomplishment logs into weekly executive highlight.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-gradient-to-br from-[#020617] to-slate-900 text-white p-5 rounded-2xl shadow-xs space-y-3 border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="px-2.5 py-0.5 rounded-md bg-[#F26522] text-white font-bold text-[10px] uppercase tracking-wider">
+                    AI Weekly Synthesis
+                  </span>
+                </div>
+                <h3 className="text-sm font-bold text-white">Weekly Accomplishment Highlights</h3>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Synthesize your verified daily task submissions into weekly executive highlights for coordinator review.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleTriggerSynthesis}
+                  disabled={isSynthesizing}
+                  className="w-full py-2.5 px-3 bg-[#F26522] hover:bg-[#D94B0A] text-white text-xs font-bold rounded-lg transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                >
+                  <Brain className="w-4 h-4" />
+                  <span>Synthesize Weekly Progress Highlight</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

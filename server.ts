@@ -777,7 +777,32 @@ async function syncAttendanceServer(log: AttendanceLog) {
           });
         }
       } else {
-        // Time-In: insert a new open attendance row
+        // Time-In: check if an open record ALREADY exists for this student on this date
+        const { data: openRow } = await supabase
+          .from('attendances')
+          .select('id')
+          .eq('student_id', studentUuid)
+          .eq('date', isoDate)
+          .is('time_out', null)
+          .limit(1)
+          .maybeSingle();
+
+        if (openRow) {
+          // Open shift already active. Do not insert duplicate row.
+          return;
+        }
+
+        // Enforce daily maximum of 2 shifts per day (Morning = 1st, Afternoon = 2nd. No third shift for a day)
+        const { data: countData } = await supabase
+          .from('attendances')
+          .select('id')
+          .eq('student_id', studentUuid)
+          .eq('date', isoDate);
+
+        if (countData && countData.length >= 2) {
+          return;
+        }
+
         await supabase.from('attendances').insert({
           student_id: studentUuid,
           date: isoDate,
@@ -3775,7 +3800,7 @@ app.use((req, res, next) => {
   });
 
   app.post('/api/attendance/time-in', (req: Request, res: Response) => {
-    const { studentId, workstationIp, remarks, dtrImageLink, shiftNumber = 1, dutyStart, dutyEnd } = req.body;
+    const { studentId, workstationIp, remarks, dtrImageLink, shiftNumber = 1, dutyStart, dutyEnd, skipSupabaseSync } = req.body;
     const student = findStudentRecord(studentId);
 
     if (student.enrollmentStatus !== 'approved' || !student.deploymentApproved) {
@@ -3842,13 +3867,15 @@ app.use((req, res, next) => {
     };
 
     attendanceLogs.unshift(newLog);
-    syncAttendanceServer(newLog);
+    if (!skipSupabaseSync) {
+      syncAttendanceServer(newLog);
+    }
 
     res.status(201).json(newLog);
   });
 
   app.post('/api/attendance/time-out', (req: Request, res: Response) => {
-    const { studentId, remarks, dtrImageLink, shiftNumber } = req.body;
+    const { studentId, remarks, dtrImageLink, shiftNumber, skipSupabaseSync } = req.body;
     const student = findStudentRecord(studentId);
 
     if (student.enrollmentStatus !== 'approved' || !student.deploymentApproved) {
@@ -3895,7 +3922,9 @@ app.use((req, res, next) => {
 
     student.renderedHours = Number((student.renderedHours + calculatedHours).toFixed(2));
 
-    syncAttendanceServer(log);
+    if (!skipSupabaseSync) {
+      syncAttendanceServer(log);
+    }
     syncStudentServer(student);
 
     res.json(log);
