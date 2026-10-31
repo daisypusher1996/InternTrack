@@ -22,6 +22,7 @@ import {
 import { Company, Student, BU_COURSES } from '../types';
 import { ThemeToggle } from './ThemeToggle';
 import FoldText from './FoldText';
+import Grainient from './Grainient';
 import {
   signInWithGoogle,
   checkGoogleOAuthStatus,
@@ -423,9 +424,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({
           Modeled after https://ibu.bicol-u.edu.ph/sign-in
          ========================================================================= */}
       <div className="hidden lg:flex lg:w-7/12 xl:w-3/5 bg-gradient-to-br from-[#06142e] via-[#0b2545] to-[#040d1a] relative overflow-hidden flex-col justify-between p-12 xl:p-16 text-white border-r border-slate-800">
+        {/* Flowing Grainy Gradient Background Effect */}
+        <div className="absolute inset-0 w-full h-full z-0 overflow-hidden pointer-events-none opacity-85">
+          <Grainient
+            colors={["#9e2c00", "#20120b", "#0f0825", "#0c0819", "#060815"]}
+            angle={114}
+            flow={0.75}
+            silk={0.48}
+            grainAmount={0.08}
+          />
+        </div>
+
         {/* Decorative background glow accents */}
-        <div className="absolute -top-32 -left-32 w-96 h-96 bg-[#F26522]/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-[#F26522]/15 rounded-full blur-3xl pointer-events-none z-1" />
+        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-3xl pointer-events-none z-1" />
 
         {/* Top Header Badge */}
         <div className="relative z-10 space-y-4">
