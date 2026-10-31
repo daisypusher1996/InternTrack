@@ -12,21 +12,20 @@ import { AuthPage } from './components/AuthPage';
 import { StudentEnrollmentGate } from './components/StudentEnrollmentGate';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ProfileSettingsView } from './components/ProfileSettingsView';
+import { User as UserIcon } from 'lucide-react';
 import {
-  Menu,
-  Bell,
-  UserCog,
-  ArrowLeftRight,
-  LogOut,
-  LayoutDashboard,
-  Archive,
-  UserPlus,
-  Clock,
-  FileText,
-  Brain,
-  GraduationCap,
-  User as UserIcon,
-} from 'lucide-react';
+  BauhausBell,
+  BauhausMenu,
+  BauhausUserCog,
+  BauhausArrowLeftRight,
+  BauhausLogOut,
+  BauhausArchive,
+  BauhausUserPlus,
+  BauhausClock,
+  BauhausFileText,
+  BauhausBrain,
+  BauhausGraduationCap,
+} from './components/BauhausIcon';
 import {
   Student,
   Group,
@@ -1291,15 +1290,15 @@ export default function App() {
 
   const headerNavItems = isCoordinator
     ? [
-        { id: 'archive', label: 'Record Archive', icon: Archive },
-        { id: 'enrollment', label: 'Enrollment & Deployment', icon: UserPlus },
-        { id: 'attendance', label: 'DTR Attendance', icon: Clock },
-        { id: 'accomplishments', label: 'Daily Accomplishments', icon: FileText },
-        { id: 'ai-analytics', label: 'AI Analytics & Alerts', icon: Brain },
+        { id: 'archive', label: 'Record Archive', icon: BauhausArchive },
+        { id: 'enrollment', label: 'Enrollment & Deployment', icon: BauhausUserPlus },
+        { id: 'attendance', label: 'DTR Attendance', icon: BauhausClock },
+        { id: 'accomplishments', label: 'Daily Accomplishments', icon: BauhausFileText },
+        { id: 'ai-analytics', label: 'AI Analytics & Alerts', icon: BauhausBrain },
       ]
     : [
-        { id: 'student-portal', label: 'My Portal & DTR', icon: GraduationCap },
-        { id: 'accomplishments', label: 'Daily Accomplishments', icon: FileText },
+        { id: 'student-portal', label: 'My Portal & DTR', icon: BauhausGraduationCap },
+        { id: 'accomplishments', label: 'Daily Accomplishments', icon: BauhausFileText },
       ];
 
   return (
@@ -1328,7 +1327,7 @@ export default function App() {
               className="xl:hidden p-2 rounded-lg text-slate-300 hover:text-white hover:bg-white/10 active:scale-95 transition-all cursor-pointer"
               aria-label="Open Navigation Menu"
             >
-              <Menu className="w-5 h-5" />
+              <BauhausMenu className="w-5 h-5" />
             </button>
 
             <button
@@ -1349,17 +1348,19 @@ export default function App() {
           {/* Center: Navigation Modules (displayed between in header on web version full screen) */}
           <nav className="hidden xl:flex items-center gap-1.5 flex-1 justify-center max-w-3xl overflow-x-auto py-1">
             {headerNavItems.map((item) => {
+              const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 flex items-center active:scale-95 cursor-pointer shrink-0 ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 flex items-center gap-2 active:scale-95 cursor-pointer shrink-0 ${
                     isActive
                       ? 'bg-[#F26522] text-white shadow-sm'
                       : 'text-slate-300 hover:text-white hover:bg-white/10'
                   }`}
                 >
+                  <Icon className="w-4 h-4" />
                   <span>{item.label}</span>
                 </button>
               );
@@ -1384,7 +1385,7 @@ export default function App() {
                   aria-label="Attendance Alerts"
                   aria-expanded={isAlertsDropdownOpen}
                 >
-                  <Bell className="w-5 h-5" />
+                  <BauhausBell className="w-5 h-5" />
                   {pendingAlerts.length > 0 && (
                     <span className="absolute top-1 right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-md bg-[#F26522] text-[10px] font-black text-white shadow">
                       {pendingAlerts.length}
@@ -1397,7 +1398,7 @@ export default function App() {
                     <div className="p-3 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="p-1.5 bg-[#F26522] rounded-lg text-white">
-                          <Bell className="w-4 h-4" />
+                          <BauhausBell className="w-4 h-4" />
                         </div>
                         <div>
                           <h4 className="font-bold text-slate-900 dark:text-white text-xs">Attendance & Schedule Alerts</h4>
@@ -1509,7 +1510,7 @@ export default function App() {
                         }}
                         className="w-full px-3 py-2 rounded-lg text-slate-200 hover:bg-white/10 flex items-center gap-2.5 font-bold transition-all active:scale-95 cursor-pointer text-left"
                       >
-                        <UserCog className="w-4 h-4 text-[#F26522]" />
+                        <BauhausUserCog className="w-4 h-4 text-[#F26522]" />
                         <span>Profile Settings</span>
                       </button>
 
@@ -1521,7 +1522,7 @@ export default function App() {
                         }}
                         className="w-full px-3 py-2 rounded-lg text-slate-200 hover:bg-white/10 flex items-center gap-2.5 font-bold transition-all active:scale-95 cursor-pointer text-left"
                       >
-                        <ArrowLeftRight className="w-4 h-4 text-blue-400" />
+                        <BauhausArrowLeftRight className="w-4 h-4 text-blue-400" />
                         <span>Switch Account</span>
                       </button>
 
@@ -1535,7 +1536,7 @@ export default function App() {
                         }}
                         className="w-full px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10 flex items-center gap-2.5 font-bold transition-all active:scale-95 cursor-pointer text-left"
                       >
-                        <LogOut className="w-4 h-4 text-red-400" />
+                        <BauhausLogOut className="w-4 h-4 text-red-400" />
                         <span>Sign Out</span>
                       </button>
                     </div>

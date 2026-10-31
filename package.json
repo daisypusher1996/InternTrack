@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@iconify-json/withicons-bauhaus": "^1.2.0",
+    "@iconify/react": "^6.0.3",
     "@supabase/supabase-js": "^2.117.3",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",

@@ -1,23 +1,25 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Clock,
-  LogIn,
-  LogOut,
-  ShieldCheck,
-  MapPin,
-  Calendar,
-  AlertCircle,
-  CheckCircle2,
-  Building2,
   User,
-  History,
   Laptop,
-  Search,
-  Filter,
   Info,
   ExternalLink,
   Loader2,
 } from 'lucide-react';
+import {
+  BauhausClock,
+  BauhausLogIn,
+  BauhausLogOut,
+  BauhausShieldCheck,
+  BauhausMapPin,
+  BauhausCalendar,
+  BauhausAlertCircle,
+  BauhausCheckCircle,
+  BauhausBuilding2,
+  BauhausHistory,
+  BauhausSearch,
+  BauhausFilter,
+} from './BauhausIcon';
 import { Student, AttendanceLog } from '../types';
 import { useAttendanceStateMachine } from '../hooks/useAttendanceStateMachine';
 
@@ -213,7 +215,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
           {/* Live Digital Clock */}
           <div className="bg-[#020617] text-white p-4 rounded-2xl shadow-sm border border-slate-800 flex items-center gap-4 shrink-0">
             <div className="p-3 bg-[#F26522] rounded-lg text-white">
-              <Clock className="w-6 h-6 animate-pulse" />
+              <BauhausClock className="w-6 h-6 animate-pulse" />
             </div>
             <div>
               <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
@@ -255,9 +257,9 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
           }`}
         >
           {feedback.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <BauhausCheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
           ) : (
-            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+            <BauhausAlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
           )}
           <span>{feedback.message}</span>
         </div>
@@ -369,7 +371,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                       </span>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 mt-0.5">
-                      <Building2 className="w-3.5 h-3.5 text-[#F26522]" />
+                      <BauhausBuilding2 className="w-3.5 h-3.5 text-[#F26522]" />
                       <span>{currentStudent.companyName}</span>
                     </div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -394,7 +396,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
             {/* Status Indicators & IP Verification */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg border border-emerald-200 dark:border-emerald-800/80 flex items-center gap-3">
-                <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <BauhausShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <div>
                   <div className="font-bold text-emerald-950 dark:text-emerald-200">Workstation IP Verified</div>
                   <div className="text-emerald-800 dark:text-emerald-400 text-[11px]">
@@ -404,7 +406,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
               </div>
 
               <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-lg border border-blue-200 dark:border-blue-800/80 flex items-center gap-3">
-                <MapPin className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
+                <BauhausMapPin className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
                 <div>
                   <div className="font-bold text-blue-950 dark:text-blue-200">Geolocation Coordinate Check</div>
                   <div className="text-blue-800 dark:text-blue-400 text-[11px]">
@@ -461,7 +463,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                   </>
                 ) : (
                   <>
-                    <LogIn className="w-4 h-4" />
+                    <BauhausLogIn className="w-4 h-4" />
                     <span>
                       {stateMachine.state === 'A'
                         ? 'Record Duty Time-In (Shift 1)'
@@ -493,7 +495,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                   </>
                 ) : (
                   <>
-                    <LogOut className="w-4 h-4" />
+                    <BauhausLogOut className="w-4 h-4" />
                     <span>
                       {stateMachine.state === 'A'
                         ? 'Record Duty Time-Out'
@@ -572,7 +574,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-bold text-[#0B2545] dark:text-white flex items-center gap-2">
-              <History className="w-5 h-5 text-[#F26522]" />
+              <BauhausHistory className="w-5 h-5 text-[#F26522]" />
               <span>Verifiable Daily Time Records (DTR) & Workstation Audit ({filteredLogs.length})</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -583,7 +585,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
           {/* Search & Filter Bar */}
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <BauhausSearch className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               <input
                 type="text"
                 value={searchQuery}
@@ -638,7 +640,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                           <td colSpan={8} className="py-2.5 px-4 font-bold text-slate-800 dark:text-slate-200">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2">
-                                <Calendar className="w-4 h-4 text-[#F26522]" />
+                                <BauhausCalendar className="w-4 h-4 text-[#F26522]" />
                                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                                   Duty Date:
                                 </span>
@@ -691,7 +693,7 @@ export const AttendancePortal: React.FC<AttendancePortalProps> = ({
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-mono text-[10px] text-slate-600 dark:text-slate-400 flex items-center gap-1">
-                            <ShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <BauhausShieldCheck className="w-3 h-3 text-emerald-600 shrink-0" />
                             <span>{log.workstationIp}</span>
                           </div>
                           {log.remarks && (

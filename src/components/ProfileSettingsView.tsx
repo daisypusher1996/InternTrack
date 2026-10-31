@@ -1,22 +1,20 @@
 import React, { useState, useEffect } from 'react';
+import { User as UserIcon, Save, Fingerprint } from 'lucide-react';
 import {
-  User as UserIcon,
-  Lock,
-  CheckCircle2,
-  AlertCircle,
-  Eye,
-  EyeOff,
-  RefreshCw,
-  Save,
-  ArrowLeft,
-  Mail,
-  Fingerprint,
-  Building2,
-  Award,
-  Shield,
-  GraduationCap,
-  Check,
-} from 'lucide-react';
+  BauhausLock,
+  BauhausCheckCircle,
+  BauhausAlertCircle,
+  BauhausEye,
+  BauhausEyeOff,
+  BauhausRotateCw,
+  BauhausArrowLeft,
+  BauhausMail,
+  BauhausBuilding2,
+  BauhausAward,
+  BauhausShield,
+  BauhausGraduationCap,
+  BauhausCheck,
+} from './BauhausIcon';
 import { User, Student } from '../types';
 import gamerIcon from '../public/gamer.png';
 import womanIcon from '../public/woman.png';
@@ -171,7 +169,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
             className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition active:scale-95 cursor-pointer"
             title="Return to previous view"
           >
-            <ArrowLeft className="w-5 h-5" />
+            <BauhausArrowLeft className="w-5 h-5" />
           </button>
           <div>
             <div className="flex items-center gap-2 mb-1">
@@ -235,7 +233,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Lock className="w-4 h-4 text-[#F26522]" />
+              <BauhausLock className="w-4 h-4 text-[#F26522]" />
               <span>Password & Security</span>
             </button>
           </div>
@@ -244,14 +242,14 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
         {/* Feedback Alerts */}
         {successFeedback && (
           <div className="m-6 mb-0 p-4 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-2xl text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-2.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <BauhausCheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>{successFeedback}</span>
           </div>
         )}
 
         {errorFeedback && (
           <div className="m-6 mb-0 p-4 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 rounded-2xl text-xs font-bold text-red-700 dark:text-red-300 flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <BauhausAlertCircle className="w-4 h-4 text-red-600 shrink-0" />
             <span>{errorFeedback}</span>
           </div>
         )}
@@ -297,7 +295,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                         onClick={() => setShowUrlField(!showUrlField)}
                         className="px-3.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition flex items-center gap-1.5 cursor-pointer shadow-xs"
                       >
-                        <RefreshCw className="w-3.5 h-3.5 text-[#F26522]" />
+                        <BauhausRotateCw className="w-3.5 h-3.5 text-[#F26522]" />
                         <span>{showUrlField ? 'Close URL Box' : 'Use Web URL'}</span>
                       </button>
 
@@ -352,7 +350,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                           </div>
                           {isSelected && (
                             <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#F26522] text-white rounded-full flex items-center justify-center shadow-xs">
-                              <Check className="w-3 h-3 stroke-[3]" />
+                              <BauhausCheck className="w-3 h-3 stroke-[3]" />
                             </span>
                           )}
                         </button>
@@ -416,7 +414,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-200 dark:border-slate-800">
                 <div className="space-y-1">
                   <span className="text-slate-500 dark:text-slate-400 block text-[10px] uppercase font-bold flex items-center gap-1">
-                    <Mail className="w-3.5 h-3.5 text-[#F26522]" /> Institutional Email:
+                    <BauhausMail className="w-3.5 h-3.5 text-[#F26522]" /> Institutional Email:
                   </span>
                   <div className="text-slate-900 dark:text-white font-mono font-bold text-xs">
                     {currentUser.email}
@@ -434,7 +432,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
 
                 <div className="space-y-1">
                   <span className="text-slate-500 dark:text-slate-400 block text-[10px] uppercase font-bold flex items-center gap-1">
-                    <Building2 className="w-3.5 h-3.5 text-[#F26522]" /> Academic Department:
+                    <BauhausBuilding2 className="w-3.5 h-3.5 text-[#F26522]" /> Academic Department:
                   </span>
                   <div className="text-slate-800 dark:text-slate-200 font-semibold text-xs">
                     {currentUser.department || 'Department of Computer Science'}
@@ -444,7 +442,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                 {currentUser.classBlock && (
                   <div className="space-y-1">
                     <span className="text-slate-500 dark:text-slate-400 block text-[10px] uppercase font-bold flex items-center gap-1">
-                      <Award className="w-3.5 h-3.5 text-[#F26522]" /> Class Block Section:
+                      <BauhausAward className="w-3.5 h-3.5 text-[#F26522]" /> Class Block Section:
                     </span>
                     <div className="text-slate-800 dark:text-slate-200 font-mono font-bold text-xs">
                       {currentUser.classBlock}
@@ -479,7 +477,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                     onClick={() => setShowNewPass(!showNewPass)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
                   >
-                    {showNewPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showNewPass ? <BauhausEyeOff className="w-4 h-4" /> : <BauhausEye className="w-4 h-4" />}
                   </button>
                 </div>
 
@@ -519,7 +517,7 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                     onClick={() => setShowConfirmPass(!showConfirmPass)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
                   >
-                    {showConfirmPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showConfirmPass ? <BauhausEyeOff className="w-4 h-4" /> : <BauhausEye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>

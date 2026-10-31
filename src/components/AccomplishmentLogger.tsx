@@ -1,25 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import {
-  FileText,
   Send,
-  CheckCircle2,
-  AlertCircle,
-  Building2,
-  Clock,
-  Brain,
-  Filter,
-  Search,
   Tag,
   Paperclip,
-  Check,
   Layers,
   Info,
-  Calendar,
   Download,
-  Trash2,
   Loader2,
-  Sparkles,
 } from 'lucide-react';
+import {
+  BauhausFileText,
+  BauhausCheckCircle,
+  BauhausAlertCircle,
+  BauhausBuilding2,
+  BauhausClock,
+  BauhausBrain,
+  BauhausFilter,
+  BauhausSearch,
+  BauhausCheck,
+  BauhausCalendar,
+  BauhausTrash2,
+  BauhausSparkles,
+} from './BauhausIcon';
 import { Student, AccomplishmentReport, Group, AttendanceLog, AISummary } from '../types';
 import { BUAccomplishmentExportModal } from './BUAccomplishmentExportModal';
 import { deleteAccomplishmentFromSupabase } from '../lib/supabase';
@@ -239,7 +241,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                   onClick={() => onTriggerGroupSummary(selectedGroupSummary)}
                   className="px-4 py-2.5 rounded-lg bg-[#020617] hover:bg-slate-800 text-white text-xs font-bold transition-all active:scale-95 flex items-center gap-2 shadow-sm hover:shadow-md shrink-0 cursor-pointer"
                 >
-                  <Brain className="w-4 h-4 text-[#F26522]" />
+                  <BauhausBrain className="w-4 h-4 text-[#F26522]" />
                   <span>Synthesize Weekly AI Highlight</span>
                 </button>
               </div>
@@ -258,7 +260,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                   </>
                 ) : (
                   <>
-                    <Brain className="w-4 h-4 text-[#F26522]" />
+                    <BauhausBrain className="w-4 h-4 text-[#F26522]" />
                     <span>Synthesize Weekly Highlight</span>
                   </>
                 )}
@@ -280,7 +282,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
 
         {successMessage && (
           <div className="mt-4 p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-lg flex items-center gap-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <BauhausCheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
             <span>{successMessage}</span>
           </div>
         )}
@@ -330,7 +332,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               AI NLP Integration
             </div>
             <div className="text-sm font-bold text-slate-900 dark:text-white mt-2 flex items-center gap-1.5">
-              <Brain className="w-4 h-4 text-[#F26522]" />
+              <BauhausBrain className="w-4 h-4 text-[#F26522]" />
               <span>Weekly NLP Highlights</span>
             </div>
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
@@ -345,7 +347,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-4">
             <h2 className="text-base font-bold text-[#0B2545] dark:text-white mb-4 flex items-center gap-2">
-              <FileText className="w-5 h-5 text-[#F26522]" />
+              <BauhausFileText className="w-5 h-5 text-[#F26522]" />
               New Daily Accomplishment Entry
             </h2>
 
@@ -362,7 +364,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                         {effectiveStudent.fullName}
                       </span>
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" />
+                        <BauhausCheckCircle className="w-3 h-3" />
                         <span>Authenticated Intern</span>
                       </span>
                     </div>
@@ -374,7 +376,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
 
                 <div className="text-left sm:text-right sm:pl-4 sm:border-l border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 shrink-0">
                   <div className="font-bold text-slate-800 dark:text-white flex items-center sm:justify-end gap-1">
-                    <Building2 className="w-3.5 h-3.5 text-[#F26522]" />
+                    <BauhausBuilding2 className="w-3.5 h-3.5 text-[#F26522]" />
                     <span>{effectiveStudent.companyName}</span>
                   </div>
                   <div className="text-[10px] text-slate-400 mt-0.5">
@@ -603,7 +605,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                     </>
                   ) : (
                     <>
-                      <Brain className="w-3.5 h-3.5 text-[#F26522]" />
+                      <BauhausBrain className="w-3.5 h-3.5 text-[#F26522]" />
                       <span>Re-synthesize Weekly Highlight</span>
                     </>
                   )}
@@ -634,7 +636,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                   disabled={isSynthesizing}
                   className="w-full py-2.5 px-3 bg-[#F26522] hover:bg-[#D94B0A] text-white text-xs font-bold rounded-lg transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shadow-xs"
                 >
-                  <Brain className="w-4 h-4" />
+                  <BauhausBrain className="w-4 h-4" />
                   <span>Synthesize Weekly Progress Highlight</span>
                 </button>
               </div>
@@ -648,7 +650,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-bold text-[#0B2545] dark:text-white flex items-center gap-2">
-              <FileText className="w-5 h-5 text-[#F26522]" />
+              <BauhausFileText className="w-5 h-5 text-[#F26522]" />
               <span>Accomplishment History Logbook ({filteredReports.length})</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -668,7 +670,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
               <span>Export DOCX</span>
             </button>
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <BauhausSearch className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               <input
                 type="text"
                 value={searchFilter}
@@ -737,7 +739,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                   <div>
                     <div className="font-bold text-slate-800 dark:text-white text-xs">{report.studentName}</div>
                     <div className="text-[11px] text-[#F26522] font-semibold flex items-center gap-1 justify-end mt-0.5">
-                      <Building2 className="w-3 h-3" />
+                      <BauhausBuilding2 className="w-3 h-3" />
                       <span className="truncate max-w-[140px]">{report.companyName}</span>
                     </div>
                     <div className="font-mono text-emerald-700 dark:text-emerald-400 font-bold mt-1">
@@ -760,7 +762,7 @@ export const AccomplishmentLogger: React.FC<AccomplishmentLoggerProps> = ({
                         </>
                       ) : (
                         <>
-                          <Trash2 className="w-3 h-3" />
+                          <BauhausTrash2 className="w-3 h-3" />
                           <span>Unsubmit</span>
                         </>
                       )}
