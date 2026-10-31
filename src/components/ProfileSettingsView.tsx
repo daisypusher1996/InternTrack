@@ -17,8 +17,20 @@ import {
   Award,
   Shield,
   GraduationCap,
+  Check,
 } from 'lucide-react';
 import { User, Student } from '../types';
+import gamerIcon from '../public/gamer.png';
+import womanIcon from '../public/woman.png';
+import dogIcon from '../public/dog.png';
+import catIcon from '../public/cat.png';
+
+const PRESET_AVATARS = [
+  { id: 'gamer', label: 'Gamer', src: gamerIcon, path: '/gamer.png' },
+  { id: 'woman', label: 'Woman', src: womanIcon, path: '/woman.png' },
+  { id: 'dog', label: 'Dog', src: dogIcon, path: '/dog.png' },
+  { id: 'cat', label: 'Cat', src: catIcon, path: '/cat.png' },
+];
 
 interface ProfileSettingsViewProps {
   currentUser: User;
@@ -319,6 +331,61 @@ export const ProfileSettingsView: React.FC<ProfileSettingsViewProps> = ({
                         </button>
                       )}
                     </div>
+                  </div>
+                </div>
+
+                {/* Choosable Preset Avatar Icons */}
+                <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block font-bold text-slate-800 dark:text-slate-200 text-xs">
+                      Choose Preset Avatar Icon:
+                    </label>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Select one of the official avatar presets
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-lg">
+                    {PRESET_AVATARS.map((preset) => {
+                      const isSelected =
+                        avatarUrl === preset.path ||
+                        avatarUrl === preset.src ||
+                        avatarUrl.toLowerCase().includes(preset.id);
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => setAvatarUrl(preset.path)}
+                          className={`group relative p-2.5 rounded-2xl border-2 transition-all duration-150 flex flex-col items-center gap-2 cursor-pointer active:scale-95 ${
+                            isSelected
+                              ? 'border-[#F26522] bg-orange-50/60 dark:bg-orange-950/30 shadow-md ring-2 ring-[#F26522]/30'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <div className="w-16 h-16 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800/80 flex items-center justify-center p-1.5">
+                            <img
+                              src={preset.src}
+                              alt={preset.label}
+                              className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-110"
+                            />
+                          </div>
+                          <span
+                            className={`text-xs font-bold ${
+                              isSelected
+                                ? 'text-[#F26522]'
+                                : 'text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {preset.label}
+                          </span>
+                          {isSelected && (
+                            <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#F26522] text-white rounded-full flex items-center justify-center shadow-xs">
+                              <Check className="w-3 h-3 stroke-[3]" />
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 

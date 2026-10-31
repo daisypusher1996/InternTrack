@@ -20,6 +20,17 @@ import {
   Award,
 } from 'lucide-react';
 import { User } from '../types';
+import gamerIcon from '../public/gamer.png';
+import womanIcon from '../public/woman.png';
+import dogIcon from '../public/dog.png';
+import catIcon from '../public/cat.png';
+
+const PRESET_AVATARS = [
+  { id: 'gamer', label: 'Gamer', src: gamerIcon, path: '/gamer.png' },
+  { id: 'woman', label: 'Woman', src: womanIcon, path: '/woman.png' },
+  { id: 'dog', label: 'Dog', src: dogIcon, path: '/dog.png' },
+  { id: 'cat', label: 'Cat', src: catIcon, path: '/cat.png' },
+];
 
 interface UserProfileModalProps {
   isOpen: boolean;
@@ -428,6 +439,65 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         </button>
                       )}
                     </div>
+                  </div>
+                </div>
+
+                {/* Choosable Preset Avatar Icons */}
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block font-bold text-slate-800 dark:text-slate-200 text-xs">
+                      Choose Preset Avatar Icon:
+                    </label>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                      Click to select
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2.5 max-w-sm sm:max-w-md">
+                    {PRESET_AVATARS.map((preset) => {
+                      const isSelected =
+                        avatarUrl === preset.path ||
+                        avatarUrl === preset.src ||
+                        avatarUrl.toLowerCase().includes(preset.id);
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            playFeedbackSound('pop');
+                            setAvatarUrl(preset.path);
+                            setAvatarAnimationKey((prev) => prev + 1);
+                          }}
+                          className={`group relative p-2 rounded-2xl border-2 transition-all duration-150 flex flex-col items-center gap-1.5 cursor-pointer active:scale-95 ${
+                            isSelected
+                              ? 'border-[#F26522] bg-orange-50/60 dark:bg-orange-950/30 shadow-md ring-2 ring-[#F26522]/30'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center p-1">
+                            <img
+                              src={preset.src}
+                              alt={preset.label}
+                              className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-110"
+                            />
+                          </div>
+                          <span
+                            className={`text-[11px] font-bold ${
+                              isSelected
+                                ? 'text-[#F26522]'
+                                : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
+                            {preset.label}
+                          </span>
+                          {isSelected && (
+                            <span className="absolute -top-1 -right-1 w-4 h-4 bg-[#F26522] text-white rounded-full flex items-center justify-center shadow-xs">
+                              <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
