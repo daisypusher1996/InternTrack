@@ -12,6 +12,7 @@ import { AuthPage } from './components/AuthPage';
 import { StudentEnrollmentGate } from './components/StudentEnrollmentGate';
 import { ThemeToggle } from './components/ThemeToggle';
 import { ProfileSettingsView } from './components/ProfileSettingsView';
+import { InternTrackClockLoader } from './components/InternTrackClockLoader';
 import { User as UserIcon } from './components/icons';
 import {
   BauhausBell,
@@ -1291,8 +1292,13 @@ export default function App() {
   // a) While role verification is underway, do not allow main UI or dashboards to render.
   if (authState.status === 'LOADING') {
     return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center">
-        <div className="w-8 h-8 border-3 border-[#F26522] border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
+        <div className="text-center space-y-4">
+          <InternTrackClockLoader size={80} className="mx-auto" />
+          <p className="font-semibold text-xs text-slate-600 dark:text-slate-400">
+            Connecting to Bicol University InternTrack System...
+          </p>
+        </div>
       </div>
     );
   }
@@ -1618,9 +1624,9 @@ export default function App() {
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 lg:px-8 py-6">
           {isLoading ? (
             <div className="flex items-center justify-center min-h-[50vh] text-slate-500 text-xs">
-              <div className="text-center space-y-2">
-                <div className="w-8 h-8 border-3 border-[#F26522] border-t-transparent rounded-md animate-spin mx-auto" />
-                <p className="font-semibold text-slate-700 dark:text-slate-300">
+              <div className="text-center space-y-4">
+                <InternTrackClockLoader size={80} className="mx-auto" />
+                <p className="font-semibold text-sm text-slate-700 dark:text-slate-300">
                   Connecting to Bicol University InternTrack System...
                 </p>
               </div>

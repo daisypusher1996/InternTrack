@@ -59,3 +59,43 @@
   }
 }
 
+/* InternTrack Clock Loading Animations */
+@keyframes clock-hand-tick {
+  0% { transform: rotate(0deg); }
+  5% { transform: rotate(30deg); }
+  8.33% { transform: rotate(30deg); }
+  13.33% { transform: rotate(60deg); }
+  16.66% { transform: rotate(60deg); }
+  21.66% { transform: rotate(90deg); }
+  25% { transform: rotate(90deg); }
+  30% { transform: rotate(120deg); }
+  33.33% { transform: rotate(120deg); }
+  38.33% { transform: rotate(150deg); }
+  41.66% { transform: rotate(150deg); }
+  46.66% { transform: rotate(180deg); }
+  50% { transform: rotate(180deg); }
+  55% { transform: rotate(210deg); }
+  58.33% { transform: rotate(210deg); }
+  63.33% { transform: rotate(240deg); }
+  66.66% { transform: rotate(240deg); }
+  71.66% { transform: rotate(270deg); }
+  75% { transform: rotate(270deg); }
+  80% { transform: rotate(300deg); }
+  83.33% { transform: rotate(300deg); }
+  88.33% { transform: rotate(330deg); }
+  91.66% { transform: rotate(330deg); }
+  96.66% { transform: rotate(360deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes clock-dial-pulse {
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 2px 4px rgba(245, 130, 32, 0.15));
+  }
+  50% {
+    opacity: 0.88;
+    filter: drop-shadow(0 4px 14px rgba(245, 130, 32, 0.35));
+  }
+}
+
